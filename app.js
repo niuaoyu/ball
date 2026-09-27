@@ -1,17 +1,20 @@
 'use strict';
 
 /* =========================================================
- * 战术片段库 · V1
- * 本地优先：视频留本机，片段 = 比赛 + 起止时间 + 多维度标签
- * 存储：IndexedDB（只存元数据，绝不存视频 Blob）
+ * 战术片段库 · V2
+ * 文件夹即数据库：
+ *   <库根目录>/
+ *     001_20260927-1015_挡拆-下顺/
+ *       clip.mp4（或 clip.webm）
+ *       meta.json（来源视频、起止时间、标签、备注）
+ * 每次启动扫描全部子文件夹重建索引；片段视频用 MediaRecorder 录制
  * ========================================================= */
 
 /* ---------- 常量 ---------- */
 const FRAME = 1 / 30;                 // 「约一帧」的步长，可按视频实际帧率改
 const DB_NAME = 'tactic-lab';
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 const DRAFT_KEY = 'tactic-lab:draft';
-const BACKUP_KEY = 'tactic-lab:last-backup';
 const RATES = [0.25, 0.5, 1];
 const DEFAULT_DIMS = ['战术', '掩护人', '持球人结果', '掩护人结果', '防守', '进攻区域', '球队', '球员'];
 
@@ -31,19 +34,22 @@ const PRESEED_MATCHES = [
 /* ---------- 全局状态 ---------- */
 const state = {
   matches: [],
-  clips: [],
+  clips: [],                  // 扫描库文件夹得到的片段记录
   currentMatchId: null,
-  currentFile: null,        // File 对象，仅内存
+  currentFile: null,          // 源视频 File，仅内存
   A: null,
   B: null,
   loop: true,
   rate: 1,
-  draftTags: [],            // [{dimension, value}]
+  draftTags: [],
   editingClipId: null,
   results: [],
   resultIndex: -1,
   playingClipId: null,
-  pendingClip: null         // 等待文件关联后再播放的片段
+  pendingClip: null,
+  library: null,              // 库根目录 DirectoryHandle
+  reviewMode: false,          // true = 正在播放已保存的片段文件
+  liveRec: { active: false, valid: false, blob: null, start: null, recorder: null }
 };
 
 /* ---------- DOM ---------- */
@@ -54,10 +60,9 @@ const els = {
   btnImportMatch: $('btnImportMatch'),
   btnPickFile: $('btnPickFile'),
   fileStatus: $('fileStatus'),
-  btnExport: $('btnExport'),
-  btnImportJson: $('btnImportJson'),
-  jsonFileInput: $('jsonFileInput'),
-  backupHint: $('backupHint'),
+  btnPickLibrary: $('btnPickLibrary'),
+  btnRescan: $('btnRescan'),
+  libraryStatus: $('libraryStatus'),
   searchInput: $('searchInput'),
   resultCount: $('resultCount'),
   hotTags: $('hotTags'),
@@ -95,6 +100,7 @@ const els = {
 };
 
 /* ---------- 小工具 ---------- */
+const r3 = n => Math.round(n * 1000) / 1000;
 function fmt(t) {
   if (t == null || !isFinite(t) || t < 0) return '--:--.---';
   const m = Math.floor(t / 60);
@@ -102,11 +108,9 @@ function fmt(t) {
   const ms = Math.floor((t % 1) * 1000);
   return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + '.' + String(ms).padStart(3, '0');
 }
-
 function uid(prefix) {
   return prefix + '-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
 }
-
 let toastTimer = null;
 function toast(msg) {
   els.toast.textContent = msg;
@@ -114,8 +118,11 @@ function toast(msg) {
   clearTimeout(toastTimer);
   toastTimer = setTimeout(() => els.toast.classList.add('hidden'), 2200);
 }
+function once(target, name) {
+  return new Promise(res => target.addEventListener(name, res, { once: true }));
+}
 
-/* ---------- IndexedDB 薄封装（仅存元数据） ---------- */
+/* ---------- IndexedDB 薄封装 ---------- */
 let db = null;
 
 function openDB() {
@@ -129,6 +136,9 @@ function openDB() {
       if (!d.objectStoreNames.contains('clips')) {
         const store = d.createObjectStore('clips', { keyPath: 'id' });
         store.createIndex('byMatch', 'matchId', { unique: false });
+      }
+      if (!d.objectStoreNames.contains('kv')) {
+        d.createObjectStore('kv');      // 存放库根目录句柄
       }
     };
     req.onsuccess = () => resolve(req.result);
@@ -145,8 +155,177 @@ function idbReq(req) {
 const idbPut = (store, val) => idbReq(db.transaction(store, 'readwrite').objectStore(store).put(val));
 const idbDel = (store, key) => idbReq(db.transaction(store, 'readwrite').objectStore(store).delete(key));
 const idbAll = store => idbReq(db.transaction(store, 'readonly').objectStore(store).getAll());
+const kvGet = key => idbReq(db.transaction('kv', 'readonly').objectStore('kv').get(key));
+const kvPut = (key, val) => idbReq(db.transaction('kv', 'readwrite').objectStore('kv').put(val, key));
 
-/* ---------- 文件关联 ---------- */
+/* =========================================================
+ * 片段库文件夹：选择 / 恢复 / 扫描
+ * ========================================================= */
+const hasDirPicker = typeof window.showDirectoryPicker === 'function';
+
+function setLibraryStatus(text, cls) {
+  els.libraryStatus.textContent = text;
+  els.libraryStatus.className = 'status' + (cls ? ' ' + cls : '');
+}
+
+async function pickLibrary() {
+  if (!hasDirPicker) return toast('需要 Chrome / Edge，当前浏览器不支持选择文件夹');
+  try {
+    const h = await window.showDirectoryPicker({ mode: 'readwrite' });
+    state.library = h;
+    await kvPut('library', h);
+    await scanLibrary();
+  } catch (err) {
+    if (err && err.name !== 'AbortError') toast('选择失败：' + err.message);
+  }
+}
+
+/* 已有句柄、重开网页后需要用户手势授权 */
+async function requestLibrary() {
+  if (!state.library) return pickLibrary();
+  try {
+    let p = await state.library.queryPermission({ mode: 'readwrite' });
+    if (p !== 'granted') p = await state.library.requestPermission({ mode: 'readwrite' });
+    if (p === 'granted') await scanLibrary();
+  } catch (err) { toast('授权失败：' + err.message); }
+}
+
+/* 扫描库根目录：每个子文件夹 = 一个片段（视频 + meta.json） */
+async function scanLibrary() {
+  if (!state.library) return;
+  let p;
+  try { p = await state.library.queryPermission({ mode: 'readwrite' }); }
+  catch (err) { return; }
+  if (p !== 'granted') {
+    setLibraryStatus('点击授权片段库「' + state.library.name + '」', 'warn');
+    return;
+  }
+  const clips = [];
+  for await (const [name, dir] of state.library.entries()) {
+    if (dir.kind !== 'directory') continue;
+    let meta = null, videoName = null;
+    for await (const [fn, fh] of dir.entries()) {
+      if (fn.toLowerCase() === 'meta.json') {
+        try {
+          const f = await fh.getFile();
+          meta = JSON.parse(await f.text());
+        } catch (err) { /* 损坏的 meta 跳过 */ }
+      } else if (/\.(mp4|webm|mov|m4v|mkv)$/i.test(fn)) {
+        videoName = fn;
+      }
+    }
+    if (meta && videoName) clips.push(Object.assign({}, meta, { dirHandle: dir, videoName }));
+  }
+  clips.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+  state.clips = clips;
+  setLibraryStatus('库：' + state.library.name + ' · ' + clips.length + ' 个片段', 'ok');
+  renderResults();
+  renderHotTags();
+  renderTagValueList();
+}
+
+/* =========================================================
+ * 片段录制（MediaRecorder，优先 MP4，不支持则 WebM）
+ * ========================================================= */
+function pickRecMime() {
+  const cands = [
+    'video/mp4;codecs=avc1.42E01E,mp4a.40.2',
+    'video/mp4;codecs=avc1,mp4a.40.2',
+    'video/mp4',
+    'video/webm;codecs=vp9,opus',
+    'video/webm;codecs=vp8,opus',
+    'video/webm'
+  ];
+  for (const c of cands) {
+    if (window.MediaRecorder && MediaRecorder.isTypeSupported(c)) return c;
+  }
+  return '';
+}
+const REC_MIME = pickRecMime();
+const REC_EXT = REC_MIME.indexOf('mp4') >= 0 ? 'mp4' : 'webm';
+
+function recBitrates() {
+  const h = video.videoHeight || 720;
+  return { v: h >= 1080 ? 8e6 : h >= 720 ? 5e6 : 2.5e6, a: 128e3 };
+}
+function makeRecorder(stream) {
+  const { v, a } = recBitrates();
+  const chunks = [];
+  const rec = new MediaRecorder(stream, {
+    mimeType: REC_MIME, videoBitsPerSecond: v, audioBitsPerSecond: a
+  });
+  rec.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  return { rec, chunks };
+}
+
+/* 边看边录：按 I 即开录，按 O 停止；中途 seek 则标记失效，保存时改走渲染补录 */
+function startLiveCapture() {
+  if (!REC_MIME || state.liveRec.active) return;
+  try {
+    const stream = video.captureStream ? video.captureStream() : video.mozCaptureStream();
+    const { rec, chunks } = makeRecorder(stream);
+    rec.onstop = () => {
+      state.liveRec.blob = new Blob(chunks, { type: REC_MIME });
+      state.liveRec.active = false;
+    };
+    rec.start(200);
+    state.liveRec = { active: true, valid: true, blob: null, start: state.A, recorder: rec };
+    video.addEventListener('seeking',
+      () => { if (state.liveRec.active) state.liveRec.valid = false; }, { once: true });
+  } catch (e) {
+    state.liveRec.active = false;
+  }
+}
+function stopLiveCapture() {
+  const r = state.liveRec.recorder;
+  if (state.liveRec.active && r && r.state !== 'inactive') r.stop();
+}
+function liveBlobReady() {
+  return new Promise(res => {
+    const check = () => {
+      if (!state.liveRec.active && state.liveRec.blob) return res(state.liveRec.blob);
+      setTimeout(check, 60);
+    };
+    check();
+  });
+}
+function resetLiveRec() {
+  if (state.liveRec.active) { try { state.liveRec.recorder.stop(); } catch (e) {} }
+  state.liveRec = { active: false, valid: false, blob: null, start: null, recorder: null };
+}
+
+/* 补录：实时播放一遍 A→B 区间录制（暂停时标记 / 回看标记的情况） */
+function renderPass(start, end) {
+  return new Promise(async (resolve, reject) => {
+    let settled = false;
+    const fail = e => { if (!settled) { settled = true; reject(e); } };
+    const guard = setTimeout(() => fail(new Error('录制超时')), (end - start + 15) * 1000);
+    try {
+      const stream = video.captureStream();
+      const { rec, chunks } = makeRecorder(stream);
+      rec.onstop = () => {
+        clearTimeout(guard);
+        if (!settled) { settled = true; resolve(new Blob(chunks, { type: REC_MIME })); }
+      };
+      video.playbackRate = 1;
+      video.currentTime = start;
+      await once(video, 'seeked');
+      rec.start(200);
+      video.play().catch(fail);
+      const check = () => {
+        if (video.currentTime >= end) {
+          video.pause();
+          if (rec.state !== 'inactive') rec.stop();
+        } else requestAnimationFrame(check);
+      };
+      requestAnimationFrame(check);
+    } catch (e) { fail(e); }
+  });
+}
+
+/* =========================================================
+ * 源视频文件关联（比赛）
+ * ========================================================= */
 const hasFSAPI = typeof window.showOpenFilePicker === 'function';
 
 function matchById(id) {
@@ -157,9 +336,6 @@ function verifyFile(file, match) {
   const problems = [];
   if (match.fileName && file.name !== match.fileName) problems.push('文件名不同');
   if (match.fileSize && file.size !== match.fileSize) problems.push('文件大小不同');
-  if (match.lastModified && Math.abs(file.lastModified - match.lastModified) > 2000) {
-    // 修改时间容差 2 秒，仅提示不阻止
-  }
   if (problems.length) {
     return confirm('所选文件与记录不匹配（' + problems.join('、') + '）。\n仍要关联到「' + match.title + '」吗？');
   }
@@ -169,6 +345,7 @@ function verifyFile(file, match) {
 function attachFile(file, match) {
   if (!verifyFile(file, match)) return false;
   if (video.src) URL.revokeObjectURL(video.src);
+  state.reviewMode = false;
   state.currentFile = file;
   video.src = URL.createObjectURL(file);
   els.placeholder.classList.add('hidden');
@@ -196,13 +373,12 @@ async function pickFileForMatch(match) {
       });
       const file = await handle.getFile();
       if (attachFile(file, match)) {
-        match.handle = handle;          // 句柄随比赛记录持久化，下次自动恢复
+        match.handle = handle;
         await idbPut('matches', match);
       }
       return;
     } catch (err) {
-      if (err && err.name === 'AbortError') return;   // 用户取消
-      // 不支持或出错时降级到 input
+      if (err && err.name === 'AbortError') return;
     }
   }
   els.videoFileInput.click();
@@ -221,11 +397,10 @@ async function restoreFromHandle(match, allowRequest) {
     attachFile(file, match);
     return true;
   } catch (err) {
-    return false;   // 句柄失效（文件被移动/删除等）
+    return false;
   }
 }
 
-/* 选中一场比赛后的文件恢复流程 */
 async function ensureFile(match, allowRequest) {
   if (state.currentFile) return true;
   setStatus('正在恢复视频文件…');
@@ -236,26 +411,35 @@ async function ensureFile(match, allowRequest) {
   return false;
 }
 
-/* ---------- A / B 标记 ---------- */
+/* =========================================================
+ * A / B 标记（与录制联动）
+ * ========================================================= */
 function setA() {
+  if (state.reviewMode) return toast('正在回看片段，切回源视频才能标记');
   if (!state.currentFile) return toast('请先关联视频文件');
   state.A = video.currentTime;
   if (state.B != null && state.B <= state.A) state.B = null;
+  if (!video.paused) startLiveCapture();
   renderAB();
   saveDraft();
 }
 
 function setB() {
+  if (state.reviewMode) return toast('正在回看片段，切回源视频才能标记');
   if (!state.currentFile) return toast('请先关联视频文件');
   if (state.A == null) return toast('先按 I 标记开始点');
   state.B = video.currentTime;
-  if (state.B <= state.A) { const t = state.A; state.A = state.B; state.B = t; }
+  if (state.B <= state.A) {
+    const t = state.A; state.A = state.B; state.B = t;
+  }
+  stopLiveCapture();
   renderAB();
   saveDraft();
-  els.tagInput.focus();     // 标完结束点直接进标签输入，支撑 10 秒流程
+  els.tagInput.focus();
 }
 
 function clearPoints() {
+  resetLiveRec();
   state.A = null;
   state.B = null;
   renderAB();
@@ -277,15 +461,17 @@ function renderAB() {
   }
 }
 
-/* ---------- 播放控制 ---------- */
+/* =========================================================
+ * 播放控制（源视频 / 回看片段通用）
+ * ========================================================= */
 function togglePlay() {
-  if (!state.currentFile) return;
+  if (!video.src) return;
   if (video.paused) video.play().catch(() => {});
   else video.pause();
 }
 
 function step(dt) {
-  if (!state.currentFile) return;
+  if (!video.src) return;
   video.pause();
   const t = Math.min(Math.max(video.currentTime + dt, 0), video.duration || 0);
   video.currentTime = t;
@@ -293,7 +479,7 @@ function step(dt) {
 
 function setRate(r) {
   state.rate = r;
-  video.playbackRate = r;   // 循环回跳不影响速率
+  video.playbackRate = r;
   els.speedBtns.forEach(b => b.classList.toggle('active', parseFloat(b.dataset.rate) === r));
 }
 
@@ -304,20 +490,15 @@ function toggleLoop() {
   saveDraft();
 }
 
-/* A-B 循环 + 时间显示：requestAnimationFrame 判定（timeupdate 粒度太粗） */
+/* A-B 循环 + 时间显示：requestAnimationFrame 判定 */
 let lastPaused = null;
 function rafTick() {
   if (state.loop && state.A != null && state.B != null && !video.paused && !video.seeking) {
-    if (video.currentTime >= state.B) {
-      video.currentTime = state.A;
-    }
+    if (video.currentTime >= state.B) video.currentTime = state.A;
   }
   els.timeNow.textContent = fmt(video.currentTime);
   const dur = video.duration || 0;
-  if (dur > 0) {
-    els.playhead.style.left = (video.currentTime / dur * 100) + '%';
-  }
-  /* 只在播放状态变化时更新按钮文字——每帧重绘会打断按钮激活态，导致 Space 失效 */
+  if (dur > 0) els.playhead.style.left = (video.currentTime / dur * 100) + '%';
   if (lastPaused !== video.paused) {
     lastPaused = video.paused;
     els.btnPlay.innerHTML = (video.paused ? '播放' : '暂停') + ' <kbd>Space</kbd>';
@@ -325,7 +506,9 @@ function rafTick() {
   requestAnimationFrame(rafTick);
 }
 
-/* ---------- 标签编辑 ---------- */
+/* =========================================================
+ * 标签编辑
+ * ========================================================= */
 function allDimensions() {
   const set = new Set(DEFAULT_DIMS);
   state.clips.forEach(c => (c.tags || []).forEach(t => set.add(t.dimension)));
@@ -337,13 +520,11 @@ function renderDimSelect() {
   els.dimSelect.innerHTML = '';
   allDimensions().forEach(d => {
     const op = document.createElement('option');
-    op.value = d;
-    op.textContent = d;
+    op.value = d; op.textContent = d;
     els.dimSelect.appendChild(op);
   });
   const custom = document.createElement('option');
-  custom.value = '__new__';
-  custom.textContent = '+ 新维度…';
+  custom.value = '__new__'; custom.textContent = '+ 新维度…';
   els.dimSelect.appendChild(custom);
   if (cur && allDimensions().includes(cur)) els.dimSelect.value = cur;
 }
@@ -357,8 +538,7 @@ function renderTagValueList() {
   els.tagValueList.innerHTML = '';
   Array.from(set).sort().forEach(v => {
     const op = document.createElement('option');
-    op.value = v;
-    els.tagValueList.appendChild(op);
+    op.value = v; els.tagValueList.appendChild(op);
   });
 }
 
@@ -368,7 +548,7 @@ function addTagsFromInput() {
   const dim = els.dimSelect.value === '__new__' ? '战术' : els.dimSelect.value;
   raw.split(/[\s,，、]+/).filter(Boolean).forEach(word => {
     let d = dim, v = word;
-    const m = word.match(/^([^:：]+)[:：](.+)$/);   // 支持「维度:值」内联写法
+    const m = word.match(/^([^:：]+)[:：](.+)$/);
     if (m) { d = m[1].trim(); v = m[2].trim(); }
     if (v && !state.draftTags.some(t => t.dimension === d && t.value === v)) {
       state.draftTags.push({ dimension: d, value: v });
@@ -387,71 +567,125 @@ function renderDraftTags() {
     const chip = document.createElement('span');
     chip.className = 'chip';
     const dim = document.createElement('span');
-    dim.className = 'dim';
-    dim.textContent = t.dimension + ':';
+    dim.className = 'dim'; dim.textContent = t.dimension + ':';
     const val = document.createElement('span');
     val.textContent = t.value;
     const x = document.createElement('span');
-    x.className = 'x';
-    x.textContent = '×';
-    x.title = '移除';
+    x.className = 'x'; x.textContent = '×'; x.title = '移除';
     x.addEventListener('click', () => {
       state.draftTags.splice(i, 1);
-      renderDraftTags();
-      saveDraft();
+      renderDraftTags(); saveDraft();
     });
     chip.append(dim, val, x);
     els.draftTags.appendChild(chip);
   });
 }
 
-/* ---------- 保存片段 ---------- */
+/* =========================================================
+ * 保存片段：录制 → 建子文件夹 → 写视频 + meta.json
+ * ========================================================= */
+async function writeFileTo(dir, name, data) {
+  const fh = await dir.getFileHandle(name, { create: true });
+  const w = await fh.createWritable();
+  await w.write(data);
+  await w.close();
+}
+function sanitize(s) {
+  return (s || '').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, '').slice(0, 20);
+}
+function buildFolderName(seq, tags, note) {
+  const d = new Date(), pad = n => String(n).padStart(2, '0');
+  const stamp = d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
+    '-' + pad(d.getHours()) + pad(d.getMinutes());
+  let slug = tags.slice(0, 3).map(t => sanitize(t.value)).join('-');
+  if (!slug && note) slug = sanitize(note).slice(0, 14);
+  if (!slug) slug = '片段';
+  return String(seq).padStart(3, '0') + '_' + stamp + '_' + slug;
+}
+
 async function saveClip() {
-  if (els.tagInput.value.trim()) addTagsFromInput();   // 输入框里还有内容就先收进标签
+  if (els.tagInput.value.trim()) addTagsFromInput();
+  if (!state.library) return toast('请先选择片段库文件夹');
   if (!state.currentMatchId) return toast('请先选择一场比赛');
   if (state.A == null || state.B == null) return toast('先用 I / O 标记开始和结束');
   const start = Math.min(state.A, state.B);
   const end = Math.max(state.A, state.B);
   const note = els.noteInput.value.trim();
+  const tags = state.draftTags.map(t => ({ ...t }));
 
+  /* 编辑已有片段：只重写 meta.json，视频不动 */
   if (state.editingClipId) {
     const clip = state.clips.find(c => c.id === state.editingClipId);
     if (clip) {
-      Object.assign(clip, {
-        start, end, note,
-        tags: state.draftTags.map(t => ({ ...t })),
-        updatedAt: Date.now()
-      });
-      await idbPut('clips', clip);
-      toast('已更新片段');
+      clip.tags = tags; clip.note = note; clip.updatedAt = Date.now();
+      const o = Object.assign({}, clip);
+      delete o.dirHandle; delete o.videoName;
+      await writeFileTo(clip.dirHandle, 'meta.json',
+        new Blob([JSON.stringify(o, null, 2)], { type: 'application/json' }));
+      toast('已更新标签（视频不变）');
     }
-    state.editingClipId = null;
-    els.editingHint.textContent = '';
-  } else {
-    const clip = {
-      id: uid('clip'),
-      matchId: state.currentMatchId,
-      start, end, note,
-      tags: state.draftTags.map(t => ({ ...t })),
-      createdAt: Date.now(),
-      updatedAt: Date.now()
-    };
-    await idbPut('clips', clip);
-    state.clips.push(clip);
-    toast('已保存（' + clip.tags.length + ' 个标签）');
+    state.editingClipId = null; els.editingHint.textContent = '';
+    resetDraftForm();
+    await scanLibrary();
+    return;
   }
 
-  /* 保存后清空草稿、留在原位继续播放——标记下一段不中断 */
-  state.draftTags = [];
-  els.noteInput.value = '';
-  clearPoints();
-  renderDraftTags();
-  saveDraft();
-  renderResults();
-  renderHotTags();
+  /* 新片段：优先用边看边录的 Blob，否则实时补录 */
+  let blob;
+  const wasPlaying = !video.paused;
+  if (state.liveRec.blob && state.liveRec.valid &&
+      Math.abs((state.liveRec.start || 0) - start) < 0.1) {
+    blob = await liveBlobReady();
+  } else {
+    toast('正在生成片段视频，约 ' + r3(end - start).toFixed(1) + ' 秒');
+    try { blob = await renderPass(start, end); }
+    catch (e) { return toast('片段生成失败：' + e.message); }
+  }
+
+  const id = uid('clip');
+  const seq = state.clips.length + 1;
+  const folderName = buildFolderName(seq, tags, note);
+  const dir = await state.library.getDirectoryHandle(folderName, { create: true });
+  const videoFileName = 'clip.' + REC_EXT;
+  await writeFileTo(dir, videoFileName, blob);
+
+  const now = Date.now();
+  const meta = {
+    app: 'tactic-lab', version: 2, id,
+    folder: folderName, videoFile: videoFileName,
+    source: {
+      matchId: state.currentMatchId,
+      matchTitle: (matchById(state.currentMatchId) || { title: '' }).title,
+      fileName: state.currentFile ? state.currentFile.name : '',
+      start: r3(start), end: r3(end)
+    },
+    tags, note,
+    duration: r3(end - start),
+    createdAt: now, updatedAt: now
+  };
+  await writeFileTo(dir, 'meta.json',
+    new Blob([JSON.stringify(meta, null, 2)], { type: 'application/json' }));
+
+  /* 回到源视频 B 点继续看，下一段标记不中断 */
+  video.playbackRate = state.rate;
+  video.currentTime = end;
+  if (wasPlaying) video.play().catch(() => {});
+  resetDraftForm();
+  toast('已保存：' + folderName);
+  await scanLibrary();
 }
 
-/* ---------- 搜索与结果 ---------- */
+function resetDraftForm() {
+  state.draftTags = [];
+  els.noteInput.value = '';
+  state.A = null; state.B = null;
+  resetLiveRec();
+  renderDraftTags(); renderAB(); saveDraft();
+}
+
+/* =========================================================
+ * 搜索与结果
+ * ========================================================= */
 function parseTerms(q) {
   return q.trim().split(/\s+/).filter(Boolean);
 }
@@ -473,9 +707,9 @@ function currentResults() {
   let list = state.clips.slice();
   if (terms.length) list = list.filter(c => clipMatchesTerms(c, terms));
   list.sort((a, b) => {
-    const ma = matchById(a.matchId), mb = matchById(b.matchId);
-    const ta = ma ? ma.title : '', tb = mb ? mb.title : '';
-    return ta === tb ? a.start - b.start : ta.localeCompare(tb, 'zh');
+    const sa = a.source || {}, sb = b.source || {};
+    const ta = sa.matchTitle || '', tb = sb.matchTitle || '';
+    return ta === tb ? (sa.start || 0) - (sb.start || 0) : ta.localeCompare(tb, 'zh');
   });
   return { list, terms };
 }
@@ -498,23 +732,22 @@ function renderResults() {
   }
 
   list.forEach((clip, idx) => {
-    const match = matchById(clip.matchId);
+    const src = clip.source || {};
     const li = document.createElement('li');
     li.className = 'result-item' + (clip.id === state.playingClipId ? ' playing' : '');
 
     const main = document.createElement('div');
     main.className = 'result-main';
-
     const title = document.createElement('div');
     title.className = 'result-title';
     const idxSpan = document.createElement('span');
     idxSpan.className = 'idx';
     idxSpan.textContent = String(idx + 1).padStart(2, '0');
     title.appendChild(idxSpan);
-    title.appendChild(document.createTextNode((match ? match.title : '未知比赛')));
+    title.appendChild(document.createTextNode(src.matchTitle || '未知来源'));
     const mt = document.createElement('span');
     mt.className = 'mtime';
-    mt.textContent = fmt(clip.start) + ' → ' + fmt(clip.end);
+    mt.textContent = fmt(src.start) + ' → ' + fmt(src.end);
     title.appendChild(mt);
 
     const sub = document.createElement('div');
@@ -553,10 +786,10 @@ function renderHotTags() {
   const top = Array.from(freq.entries()).sort((a, b) => b[1] - a[1]).slice(0, 12);
   els.hotTags.innerHTML = '';
   if (!top.length) return;
-  top.forEach(([value, count]) => {
+  top.forEach(([value]) => {
     const chip = document.createElement('span');
     chip.className = 'chip';
-    chip.textContent = value + ' · ' + count;
+    chip.textContent = value + ' · ' + freq.get(value);
     chip.title = '点击加入搜索';
     chip.addEventListener('click', () => {
       const q = els.searchInput.value.trim();
@@ -567,73 +800,82 @@ function renderHotTags() {
   });
 }
 
-/* ---------- 播放指定片段 ---------- */
+/* =========================================================
+ * 回看片段：直接读取文件夹里的 clip 文件播放循环
+ * ========================================================= */
 async function playClip(clip) {
   state.playingClipId = clip.id;
   if (state.editingClipId && state.editingClipId !== clip.id) {
-    state.editingClipId = null;
-    els.editingHint.textContent = '';
+    state.editingClipId = null; els.editingHint.textContent = '';
   }
   renderResults();
-
-  if (clip.matchId !== state.currentMatchId) {
-    await selectMatch(clip.matchId, true);
+  try {
+    let perm = await clip.dirHandle.queryPermission({ mode: 'read' });
+    if (perm !== 'granted') perm = await clip.dirHandle.requestPermission({ mode: 'read' });
+    if (perm !== 'granted') return toast('未授权读取片段文件');
+    const fh = await clip.dirHandle.getFileHandle(clip.videoName);
+    const file = await fh.getFile();
+    loadReviewFile(file);
+  } catch (err) {
+    toast('片段读取失败，试试重新扫描');
   }
-  if (!state.currentFile) {
-    state.pendingClip = clip;   // 文件关联成功后自动续播
-    toast('请先关联「' + (matchById(clip.matchId) || {}).title + '」的视频文件');
-    return;
-  }
+}
 
-  state.A = clip.start;
-  state.B = clip.end;
-  if (!state.loop) toggleLoop();
-  renderAB();
-  video.playbackRate = state.rate;
-  video.currentTime = clip.start;
-  video.play().catch(() => {});
+function loadReviewFile(file) {
+  if (video.src) URL.revokeObjectURL(video.src);
+  state.reviewMode = true;
+  state.currentFile = null;
+  video.src = URL.createObjectURL(file);
+  els.placeholder.classList.add('hidden');
+  state.A = 0; state.B = null; state.loop = true;
+  video.addEventListener('loadedmetadata', () => {
+    state.B = video.duration;
+    renderAB();
+    video.play().catch(() => {});
+  }, { once: true });
 }
 
 function editClip(clip) {
   state.editingClipId = clip.id;
-  state.A = clip.start;
-  state.B = clip.end;
   state.draftTags = (clip.tags || []).map(t => ({ ...t }));
   els.noteInput.value = clip.note || '';
-  els.editingHint.textContent = '正在编辑已有片段，修改后按 Enter 保存；点其他片段可取消编辑';
-  renderAB();
-  renderDraftTags();
-  saveDraft();
-  if (clip.matchId === state.currentMatchId && state.currentFile) {
-    video.currentTime = clip.start;
-  }
+  els.editingHint.textContent = '编辑模式：改标签/备注后 Enter 保存（视频不变）';
+  renderDraftTags(); saveDraft();
+  playClip(clip);
   window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+function cancelEdit() {
+  state.editingClipId = null;
+  els.editingHint.textContent = '';
+  state.draftTags = [];
+  els.noteInput.value = '';
+  renderDraftTags();
 }
 
 async function deleteClip(clip) {
-  if (!confirm('删除这个片段？（' + fmt(clip.start) + ' → ' + fmt(clip.end) + '）')) return;
-  await idbDel('clips', clip.id);
-  state.clips = state.clips.filter(c => c.id !== clip.id);
+  if (!confirm('删除文件夹「' + (clip.folder || '') + '」？\n视频和标签文件都会被删除')) return;
+  try {
+    await clip.dirHandle.remove({ recursive: true });
+  } catch (err) {
+    return toast('删除失败：' + err.message);
+  }
   if (state.playingClipId === clip.id) state.playingClipId = null;
-  renderResults();
-  renderHotTags();
-  renderTagValueList();
   toast('已删除');
+  await scanLibrary();
 }
 
 function navClip(delta) {
   const list = state.results.length ? state.results : state.clips;
   if (!list.length) return;
-  let idx = state.resultIndex;
-  if (idx < 0 || idx >= list.length || list[idx].id !== state.playingClipId) {
-    idx = list.findIndex(c => c.id === state.playingClipId);
-  }
+  let idx = list.findIndex(c => c.id === state.playingClipId);
   idx = (idx + delta + list.length) % list.length;
   state.resultIndex = idx;
   playClip(list[idx]);
 }
 
-/* ---------- 比赛管理 ---------- */
+/* =========================================================
+ * 比赛管理（源视频）
+ * ========================================================= */
 function renderMatchSelect() {
   els.matchSelect.innerHTML = '';
   state.matches.forEach(m => {
@@ -648,6 +890,7 @@ function renderMatchSelect() {
 async function selectMatch(id, allowRequest) {
   const match = matchById(id);
   if (!match) return;
+  state.reviewMode = false;
   if (state.currentMatchId !== id) {
     state.currentFile = null;
     if (video.src) { URL.revokeObjectURL(video.src); video.removeAttribute('src'); video.load(); }
@@ -681,7 +924,6 @@ async function importMatch() {
 }
 
 async function addMatchFromFile(file, handle) {
-  /* 同名同大小则视为已存在，直接切换 */
   let match = state.matches.find(m => m.fileName === file.name && m.fileSize === file.size);
   if (!match) {
     match = {
@@ -703,94 +945,26 @@ async function addMatchFromFile(file, handle) {
   toast('已导入：' + match.title);
 }
 
-/* ---------- JSON 导出 / 导入 ---------- */
-function exportJSON() {
-  const data = {
-    app: 'tactic-lab',
-    version: 1,
-    exportedAt: new Date().toISOString(),
-    matches: state.matches.map(m => {
-      const { handle, ...rest } = m;   // 句柄不可序列化，导出时剔除
-      return rest;
-    }),
-    clips: state.clips
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  const d = new Date();
-  const pad = n => String(n).padStart(2, '0');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'tactic-lab-backup-' + d.getFullYear() + pad(d.getMonth() + 1) + pad(d.getDate()) +
-    '-' + pad(d.getHours()) + pad(d.getMinutes()) + '.json';
-  a.click();
-  URL.revokeObjectURL(a.href);
-  localStorage.setItem(BACKUP_KEY, String(Date.now()));
-  renderBackupHint();
-  toast('已导出 ' + state.clips.length + ' 个片段');
-}
-
-async function importJSON(file) {
-  let data;
-  try {
-    data = JSON.parse(await file.text());
-  } catch (err) {
-    return toast('文件不是有效的 JSON');
-  }
-  if (!data || data.app !== 'tactic-lab' || !Array.isArray(data.clips)) {
-    return toast('不是本工具导出的备份文件');
-  }
-  let nm = 0, nc = 0;
-  for (const m of data.matches || []) {
-    if (!m.id) continue;
-    const old = matchById(m.id);
-    await idbPut('matches', old ? Object.assign(old, m, { handle: old.handle }) : m);
-    nm++;
-  }
-  for (const c of data.clips) {
-    if (!c.id || !c.matchId) continue;
-    await idbPut('clips', c);
-    nc++;
-  }
-  state.matches = await idbAll('matches');
-  state.clips = await idbAll('clips');
-  renderMatchSelect();
-  renderResults();
-  renderHotTags();
-  renderDimSelect();
-  renderTagValueList();
-  toast('导入完成：' + nm + ' 场比赛，' + nc + ' 个片段');
-}
-
-function renderBackupHint() {
-  const last = parseInt(localStorage.getItem(BACKUP_KEY) || '0', 10);
-  if (!state.clips.length) { els.backupHint.textContent = ''; return; }
-  if (!last) {
-    els.backupHint.textContent = '尚未备份过';
-    return;
-  }
-  const days = Math.floor((Date.now() - last) / 86400000);
-  els.backupHint.textContent = days >= 7 ? '已 ' + days + ' 天未备份' : (days === 0 ? '今天已备份' : days + ' 天前备份');
-}
-
-/* ---------- 草稿（未保存的 A/B 点与标签） ---------- */
+/* =========================================================
+ * 草稿暂存
+ * ========================================================= */
 function saveDraft() {
   try {
     localStorage.setItem(DRAFT_KEY, JSON.stringify({
       matchId: state.currentMatchId,
       A: state.A, B: state.B,
-      loop: state.loop,
-      rate: state.rate,
+      loop: state.loop, rate: state.rate,
       tags: state.draftTags,
       note: els.noteInput.value
     }));
-  } catch (err) { /* 忽略配额错误 */ }
+  } catch (err) {}
 }
 
 function restoreDraft() {
   let d = null;
   try { d = JSON.parse(localStorage.getItem(DRAFT_KEY) || 'null'); } catch (err) { return; }
   if (!d) return;
-  if (d.matchId) state.currentMatchId = d.matchId;   // 恢复到上次的比赛
+  if (d.matchId) state.currentMatchId = d.matchId;
   state.A = d.A != null ? d.A : null;
   state.B = d.B != null ? d.B : null;
   state.loop = d.loop !== false;
@@ -799,13 +973,15 @@ function restoreDraft() {
   els.noteInput.value = d.note || '';
   els.btnLoop.classList.toggle('on', state.loop);
   setRate(state.rate);
-  renderDraftTags();
-  renderAB();
+  renderDraftTags(); renderAB();
 }
 
-/* ---------- 事件绑定 ---------- */
+/* =========================================================
+ * 事件绑定
+ * ========================================================= */
 function bindEvents() {
-  els.matchSelect.addEventListener('change', () => selectMatch(els.matchSelect.value, true));
+  els.matchSelect.addEventListener('change',
+    () => selectMatch(els.matchSelect.value, true));
   els.btnPickFile.addEventListener('click', () => {
     const m = matchById(state.currentMatchId);
     if (m) pickFileForMatch(m);
@@ -829,12 +1005,12 @@ function bindEvents() {
     }
   });
 
-  els.btnExport.addEventListener('click', exportJSON);
-  els.btnImportJson.addEventListener('click', () => els.jsonFileInput.click());
-  els.jsonFileInput.addEventListener('change', () => {
-    const f = els.jsonFileInput.files[0];
-    els.jsonFileInput.value = '';
-    if (f) importJSON(f);
+  els.btnPickLibrary.addEventListener('click', pickLibrary);
+  els.btnRescan.addEventListener('click', () => {
+    if (state.library) scanLibrary(); else pickLibrary();
+  });
+  els.libraryStatus.addEventListener('click', () => {
+    if (els.libraryStatus.classList.contains('warn')) requestLibrary();
   });
 
   els.searchInput.addEventListener('input', renderResults);
@@ -849,15 +1025,15 @@ function bindEvents() {
   els.btnNextFrame.addEventListener('click', () => step(FRAME));
   els.btnBack1s.addEventListener('click', () => step(-1));
   els.btnFwd1s.addEventListener('click', () => step(1));
-  video.addEventListener('click', togglePlay);   // 点击画面 = 播放/暂停
+  video.addEventListener('click', togglePlay);
 
-  /* 任何按钮点击后自动失焦，保证 Space / I / O 等快捷键始终作用于播放器 */
   document.addEventListener('click', e => {
     const btn = e.target.closest('button');
     if (btn) btn.blur();
   }, true);
   els.btnLoop.addEventListener('click', toggleLoop);
-  els.speedBtns.forEach(b => b.addEventListener('click', () => setRate(parseFloat(b.dataset.rate))));
+  els.speedBtns.forEach(b =>
+    b.addEventListener('click', () => setRate(parseFloat(b.dataset.rate))));
   els.btnPrevClip.addEventListener('click', () => navClip(-1));
   els.btnNextClip.addEventListener('click', () => navClip(1));
 
@@ -888,9 +1064,7 @@ function bindEvents() {
         DEFAULT_DIMS.push(name.trim());
         renderDimSelect();
         els.dimSelect.value = name.trim();
-      } else {
-        renderDimSelect();
-      }
+      } else renderDimSelect();
     }
     renderTagValueList();
   });
@@ -898,10 +1072,8 @@ function bindEvents() {
   els.tagInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (!addTagsFromInput()) saveClip();   // 空输入再按 Enter = 保存
-    } else if (e.key === 'Escape') {
-      els.tagInput.blur();
-    }
+      if (!addTagsFromInput()) saveClip();
+    } else if (e.key === 'Escape') els.tagInput.blur();
   });
   els.noteInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); saveClip(); }
@@ -913,7 +1085,6 @@ function bindEvents() {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const t = e.target;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
-    /* 焦点在按钮上时，Enter/Space 交给原生 click，避免触发两次 */
     if (t && t.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return;
 
     const k = e.key.toLowerCase();
@@ -924,7 +1095,10 @@ function bindEvents() {
       case 'i': setA(); break;
       case 'o': setB(); break;
       case 'enter': e.preventDefault(); saveClip(); break;
-      case 'escape': clearPoints(); break;
+      case 'escape':
+        if (state.editingClipId) cancelEdit();
+        else clearPoints();
+        break;
       case 'j': {
         const i = RATES.indexOf(state.rate);
         setRate(RATES[Math.max(i - 1, 0)]);
@@ -944,7 +1118,9 @@ function bindEvents() {
   });
 }
 
-/* ---------- 启动 ---------- */
+/* =========================================================
+ * 启动
+ * ========================================================= */
 async function init() {
   db = await openDB();
 
@@ -953,19 +1129,27 @@ async function init() {
     for (const m of PRESEED_MATCHES) await idbPut('matches', m);
     state.matches = await idbAll('matches');
   }
-  state.clips = await idbAll('clips');
 
   renderMatchSelect();
   renderDimSelect();
-  renderTagValueList();
-  renderResults();
-  renderHotTags();
-  renderBackupHint();
   bindEvents();
-  restoreDraft();
 
+  /* 恢复片段库（无手势时只能等用户点击授权） */
+  const lib = await kvGet('library');
+  if (lib) {
+    state.library = lib;
+    let p;
+    try { p = await lib.queryPermission({ mode: 'readwrite' }); }
+    catch (err) { p = 'prompt'; }
+    if (p === 'granted') await scanLibrary();
+    else setLibraryStatus('点击恢复片段库「' + lib.name + '」', 'warn');
+  } else {
+    setLibraryStatus('未选择片段库文件夹');
+  }
+
+  restoreDraft();
   const first = matchById(state.currentMatchId) || state.matches[0];
-  if (first) await selectMatch(first.id, false);   // 页面加载无手势，只做静默恢复
+  if (first) await selectMatch(first.id, false);
 
   requestAnimationFrame(rafTick);
 }
@@ -974,3 +1158,4 @@ init().catch(err => {
   console.error(err);
   setStatus('初始化失败：' + err.message, 'warn');
 });
+
