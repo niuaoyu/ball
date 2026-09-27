@@ -1,0 +1,381 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>战术在线案例库</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23f59e0b'/%3E%3Cpath d='M2 16h28M16 2c4 4 4 24 0 28M16 2c-4 4-4 24 0 28M4 7c8 5 16 5 24 0M4 25c8-5 16-5 24 0' stroke='%231a1206' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
+<style>
+  :root{
+    --bg:#f6f4ef; --card:#ffffff; --ink:#22201c; --sub:#7a766d;
+    --line:#e6e2d8; --brand:#0f766e; --brand-soft:#e3f1ef;
+    --amber:#f59e0b; --amber-soft:#fdf2dd;
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+    font-size:15px; line-height:1.5;
+  }
+  .wrap{max-width:1180px; margin:0 auto; padding:18px 18px 40px;}
+  header.top{display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:14px;}
+  header.top h1{font-size:20px; margin:0; letter-spacing:.5px;}
+  header.top .meta{color:var(--sub); font-size:13px;}
+  .layout{display:grid; grid-template-columns:1.65fr 1fr; gap:16px; align-items:start;}
+
+  .stage{background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden;}
+  .player{position:relative; background:#111; aspect-ratio:16/9;}
+  .player video{width:100%; height:100%; display:block;}
+  .player .loading{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    color:#cfcabf; font-size:14px; pointer-events:none;
+  }
+  .player .loading.hidden{display:none;}
+
+  .pbar{padding:10px 12px; border-top:1px solid var(--line);}
+  .pbar .row1{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  button{
+    font:inherit; color:var(--ink); background:#f3f1ea; border:1px solid var(--line);
+    border-radius:8px; padding:7px 12px; cursor:pointer;
+  }
+  button:hover{background:#ebe8df;}
+  button.primary{background:var(--brand); border-color:var(--brand); color:#fff;}
+  button.primary:hover{background:#0c635c;}
+  button.on{background:var(--brand-soft); border-color:var(--brand); color:var(--brand);}
+  .time{font-variant-numeric:tabular-nums; color:var(--sub); font-size:13px; margin-left:auto;}
+  .now-title{
+    padding:10px 14px 0; font-size:14px; font-weight:600;
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  }
+  .now-title .src{font-weight:400; color:var(--sub); font-size:12.5px;}
+  .now-tags{padding:6px 14px 12px; display:flex; gap:6px; flex-wrap:wrap;}
+  .now-note{padding:0 14px 12px; color:var(--sub); font-size:13.5px;}
+
+  .side{
+    background:var(--card); border:1px solid var(--line); border-radius:12px;
+    display:flex; flex-direction:column; max-height:calc(100vh - 110px);
+    position:sticky; top:12px;
+  }
+  .side .search{padding:12px; border-bottom:1px solid var(--line);}
+  .side .search input{
+    width:100%; font:inherit; padding:9px 12px; border:1px solid var(--line);
+    border-radius:8px; background:#faf9f5; outline:none;
+  }
+  .side .search input:focus{border-color:var(--brand); background:#fff;}
+  .side .count{padding:8px 14px; color:var(--sub); font-size:12.5px; border-bottom:1px solid var(--line);}
+  .list{overflow-y:auto; padding:8px; flex:1;}
+  .item{
+    border:1px solid transparent; border-radius:10px; padding:9px 10px; cursor:pointer;
+    margin-bottom:4px;
+  }
+  .item:hover{background:#f7f5ef;}
+  .item.active{background:var(--brand-soft); border-color:var(--brand);}
+  .item .t{display:flex; align-items:baseline; gap:8px;}
+  .item .t .idx{color:var(--sub); font-size:12px; font-variant-numeric:tabular-nums;}
+  .item .t .name{font-weight:600; font-size:14px;}
+  .item .t .dur{margin-left:auto; color:var(--sub); font-size:12px; font-variant-numeric:tabular-nums;}
+  .item .chips{display:flex; gap:5px; flex-wrap:wrap; margin-top:5px;}
+  .chip{
+    font-size:11.5px; padding:1px 7px; border-radius:20px;
+    background:var(--amber-soft); color:#92600a; border:1px solid #f0dfbd;
+    white-space:nowrap;
+  }
+  .chip.dim{background:var(--brand-soft); color:var(--brand); border-color:#c5e0dc;}
+  .empty{padding:30px 16px; text-align:center; color:var(--sub); font-size:13.5px;}
+
+  .err{
+    background:#fdecec; border:1px solid #f3c2c2; color:#9b2c2c;
+    border-radius:10px; padding:12px 14px; margin-bottom:14px; font-size:14px;
+  }
+  .err.hidden{display:none;}
+
+  @media (max-width: 880px){
+    .layout{grid-template-columns:1fr;}
+    .side{max-height:none; position:static;}
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="top">
+    <h1>战术在线案例库</h1>
+    <span class="meta" id="metaText">正在加载…</span>
+  </header>
+
+  <div class="err hidden" id="errBox"></div>
+
+  <div class="layout">
+    <!-- 播放区 -->
+    <div class="stage">
+      <div class="player">
+        <video id="video" playsinline preload="metadata"></video>
+        <div class="loading" id="loading">从案例列表选择一个片段播放</div>
+      </div>
+      <div class="now-title" id="nowTitle"></div>
+      <div class="now-tags" id="nowTags"></div>
+      <div class="now-note" id="nowNote"></div>
+      <div class="pbar">
+        <div class="row1">
+          <button id="btnPrev" title="上一片段 (,)">← 上一个</button>
+          <button id="btnPlay" class="primary" title="播放/暂停 (Space)">播放</button>
+          <button id="btnNext" title="下一片段 (.)">下一个 →</button>
+          <button id="btnLoop" class="on" title="循环开关">循环：开</button>
+          <span class="time" id="timeText">00:00 / 00:00</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 列表区 -->
+    <div class="side">
+      <div class="search">
+        <input id="search" type="search" placeholder="搜索标签或备注（空格分隔 = 同时命中）" autocomplete="off">
+      </div>
+      <div class="count" id="countText"></div>
+      <div class="list" id="list"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+/* ---------- 配置 ---------- */
+const SUPA_URL = 'https://xzfnznwovpfovyssolrb.supabase.co';
+const SUPA_KEY = 'sb_publishable_NRdVd7YIdp_aJfpG5cH-BQ_MqM1U3US';
+
+/* ---------- 状态 ---------- */
+const state = {
+  clips: [],        // 全部片段（来自 Supabase）
+  results: [],      // 搜索过滤后
+  current: null,
+  loop: true
+};
+
+/* ---------- DOM ---------- */
+const $ = id => document.getElementById(id);
+const video = $('video');
+const el = {
+  meta: $('metaText'), err: $('errBox'), loading: $('loading'),
+  nowTitle: $('nowTitle'), nowTags: $('nowTags'), nowNote: $('nowNote'),
+  btnPrev: $('btnPrev'), btnPlay: $('btnPlay'), btnNext: $('btnNext'),
+  btnLoop: $('btnLoop'), time: $('timeText'),
+  search: $('search'), count: $('countText'), list: $('list')
+};
+
+/* ---------- 工具 ---------- */
+function fmtTime(t) {
+  if (!isFinite(t)) return '00:00';
+  const m = Math.floor(t / 60), s = Math.floor(t % 60);
+  return String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0');
+}
+function showError(msg) {
+  el.err.textContent = msg;
+  el.err.classList.remove('hidden');
+}
+
+/* ---------- 加载数据 ---------- */
+async function loadClips() {
+  const res = await fetch(SUPA_URL + '/rest/v1/clips?order=created_at.asc', {
+    headers: { apikey: SUPA_KEY, Accept: 'application/json' }
+  });
+  if (!res.ok) throw new Error('Supabase 请求失败：HTTP ' + res.status);
+  const data = await res.json();
+  if (!Array.isArray(data)) throw new Error('返回数据格式异常');
+  return data;
+}
+
+/* ---------- 搜索 ---------- */
+function parseTerms(q) {
+  return q.trim().split(/\s+/).filter(Boolean);
+}
+function clipText(c) {
+  const parts = [c.title, c.note];
+  (c.tags || []).forEach(t => parts.push(t.dimension, t.value));
+  const s = c.source || {};
+  parts.push(s.matchTitle, s.fileName);
+  return parts.filter(Boolean).join(' ');
+}
+function applySearch() {
+  const terms = parseTerms(el.search.value);
+  if (!terms.length) { state.results = state.clips.slice(); }
+  else {
+    state.results = state.clips.filter(c => {
+      const text = clipText(c);
+      return terms.every(t => text.includes(t));
+    });
+  }
+  renderList();
+}
+
+/* ---------- 渲染列表 ---------- */
+function renderList() {
+  const list = state.results;
+  el.count.textContent = list.length + ' / ' + state.clips.length + ' 个片段';
+  el.list.innerHTML = '';
+  if (!list.length) {
+    const d = document.createElement('div');
+    d.className = 'empty';
+    d.textContent = state.clips.length ? '没有匹配的片段' : '案例库为空';
+    el.list.appendChild(d);
+    return;
+  }
+  list.forEach((c, i) => {
+    const item = document.createElement('div');
+    item.className = 'item' + (state.current && c.id === state.current.id ? ' active' : '');
+
+    const t = document.createElement('div');
+    t.className = 't';
+    const idx = document.createElement('span');
+    idx.className = 'idx';
+    idx.textContent = String(i + 1).padStart(2, '0');
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = c.title || c.folder || '未命名';
+    const dur = document.createElement('span');
+    dur.className = 'dur';
+    dur.textContent = (c.duration ? c.duration.toFixed(1) : '?') + 's';
+    t.append(idx, name, dur);
+
+    const chips = document.createElement('div');
+    chips.className = 'chips';
+    (c.tags || []).forEach(tag => {
+      const chip = document.createElement('span');
+      chip.className = 'chip dim';
+      chip.textContent = tag.dimension + ':' + tag.value;
+      chips.appendChild(chip);
+    });
+
+    item.append(t, chips);
+    item.addEventListener('click', () => play(c));
+    el.list.appendChild(item);
+  });
+}
+
+/* ---------- 播放 ---------- */
+function play(c) {
+  if (!c || !c.video_url) return;
+  state.current = c;
+  state.retries = 0;
+  el.err.classList.add('hidden');
+  loadVideo();
+
+  /* 标题区 */
+  const s = c.source || {};
+  el.nowTitle.innerHTML = '';
+  el.nowTitle.appendChild(document.createTextNode(c.title || '未命名'));
+  if (s.matchTitle) {
+    const span = document.createElement('span');
+    span.className = 'src';
+    span.textContent = '来源：' + s.matchTitle +
+      (s.start != null ? ' · ' + fmtTime(s.start) : '');
+    el.nowTitle.appendChild(span);
+  }
+
+  el.nowTags.innerHTML = '';
+  (c.tags || []).forEach(tag => {
+    const chip = document.createElement('span');
+    chip.className = 'chip dim';
+    chip.textContent = tag.dimension + ':' + tag.value;
+    el.nowTags.appendChild(chip);
+  });
+
+  el.nowNote.textContent = c.note && c.note !== c.title ? c.note : '';
+  renderList();
+}
+
+function loadVideo() {
+  const c = state.current;
+  if (!c) return;
+  el.loading.classList.remove('hidden');
+  el.loading.textContent = state.retries
+    ? '网络波动，重试中（' + state.retries + '/2）…' : '加载中…';
+  video.src = c.video_url + (state.retries ? '?r=' + state.retries : '');
+  video.loop = state.loop;
+  video.play().catch(() => {});
+}
+
+function togglePlay() {
+  if (!video.src) { if (state.results[0]) play(state.results[0]); return; }
+  if (video.paused) video.play(); else video.pause();
+}
+function nav(delta) {
+  const list = state.results;
+  if (!list.length) return;
+  let i = list.findIndex(c => state.current && c.id === state.current.id);
+  i = (i + delta + list.length) % list.length;
+  play(list[i]);
+}
+function toggleLoop() {
+  state.loop = !state.loop;
+  video.loop = state.loop;
+  el.btnLoop.classList.toggle('on', state.loop);
+  el.btnLoop.textContent = state.loop ? '循环：开' : '循环：关';
+}
+
+/* ---------- 播放器事件 ---------- */
+video.addEventListener('playing', () => {
+  el.loading.classList.add('hidden');
+  el.btnPlay.textContent = '暂停';
+});
+video.addEventListener('pause', () => { el.btnPlay.textContent = '播放'; });
+video.addEventListener('canplay', () => el.loading.classList.add('hidden'));
+video.addEventListener('error', () => {
+  if (!video.src || !state.current) return;
+  if (state.retries < 2) {
+    state.retries++;
+    setTimeout(loadVideo, 700);
+  } else {
+    el.loading.classList.add('hidden');
+    el.err.innerHTML = '';
+    el.err.appendChild(document.createTextNode('视频多次加载失败，请检查网络后'));
+    const b = document.createElement('button');
+    b.textContent = '点击重试';
+    b.style.marginLeft = '8px';
+    b.addEventListener('click', () => {
+      state.retries = 0;
+      el.err.classList.add('hidden');
+      loadVideo();
+    });
+    el.err.appendChild(b);
+    el.err.classList.remove('hidden');
+  }
+});
+function tickTime() {
+  el.time.textContent = fmtTime(video.currentTime) + ' / ' + fmtTime(video.duration);
+  requestAnimationFrame(tickTime);
+}
+
+/* ---------- 控件事件 ---------- */
+el.btnPrev.addEventListener('click', () => nav(-1));
+el.btnNext.addEventListener('click', () => nav(1));
+el.btnPlay.addEventListener('click', togglePlay);
+el.btnLoop.addEventListener('click', toggleLoop);
+el.search.addEventListener('input', applySearch);
+
+window.addEventListener('keydown', e => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  const t = e.target;
+  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  switch (e.key) {
+    case ' ': e.preventDefault(); togglePlay(); break;
+    case ',': nav(-1); break;
+    case '.': nav(1); break;
+  }
+});
+
+/* ---------- 启动 ---------- */
+(async function init() {
+  try {
+    state.clips = await loadClips();
+    el.meta.textContent = '共 ' + state.clips.length + ' 个片段 · 视频托管于 Cloudflare R2';
+    applySearch();
+    if (state.clips.length) play(state.clips[0]);
+  } catch (err) {
+    el.meta.textContent = '加载失败';
+    showError('案例库加载失败：' + err.message);
+  }
+  requestAnimationFrame(tickTime);
+})();
+</script>
+</body>
+</html>
