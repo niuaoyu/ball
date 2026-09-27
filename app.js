@@ -5,7 +5,7 @@
  * 文件夹即数据库：
  *   <库根目录>/
  *     001_20260927-1015_挡拆-下顺/
- *       clip.mp4（或 clip.webm）
+ *       {id}.mp4（或 {id}.webm，文件名取自 meta.json 的 id）
  *       meta.json（来源视频、起止时间、标签、备注）
  * 每次启动扫描全部子文件夹重建索引；片段视频用 MediaRecorder 录制
  * ========================================================= */
@@ -203,7 +203,8 @@ async function scanLibrary() {
   const clips = [];
   for await (const [name, dir] of state.library.entries()) {
     if (dir.kind !== 'directory') continue;
-    let meta = null, videoName = null;
+    let meta = null;
+    const videoCandidates = [];
     for await (const [fn, fh] of dir.entries()) {
       if (fn.toLowerCase() === 'meta.json') {
         try {
@@ -211,10 +212,17 @@ async function scanLibrary() {
           meta = JSON.parse(await f.text());
         } catch (err) { /* 损坏的 meta 跳过 */ }
       } else if (/\.(mp4|webm|mov|m4v|mkv)$/i.test(fn)) {
-        videoName = fn;
+        videoCandidates.push(fn);
       }
     }
-    if (meta && videoName) clips.push(Object.assign({}, meta, { dirHandle: dir, videoName }));
+    if (meta && videoCandidates.length) {
+      /* 优先取以 meta.id 命名的视频，兼容旧版 clip.mp4 */
+      const escId = String(meta.id || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const videoName = (meta.id &&
+        videoCandidates.find(fn => new RegExp('^' + escId + '\\.', 'i').test(fn))) ||
+        videoCandidates[0];
+      clips.push(Object.assign({}, meta, { dirHandle: dir, videoName }));
+    }
   }
   clips.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
   state.clips = clips;
@@ -646,7 +654,7 @@ async function saveClip() {
   const seq = state.clips.length + 1;
   const folderName = buildFolderName(seq, tags, note);
   const dir = await state.library.getDirectoryHandle(folderName, { create: true });
-  const videoFileName = 'clip.' + REC_EXT;
+  const videoFileName = id + '.' + REC_EXT;
   await writeFileTo(dir, videoFileName, blob);
 
   const now = Date.now();
@@ -801,7 +809,7 @@ function renderHotTags() {
 }
 
 /* =========================================================
- * 回看片段：直接读取文件夹里的 clip 文件播放循环
+ * 回看片段：直接读取文件夹里的片段视频文件播放循环
  * ========================================================= */
 async function playClip(clip) {
   state.playingClipId = clip.id;
