@@ -41,6 +41,17 @@
     background:#fff; user-select:none;
   }
   .toolbar .toggle.on{color:var(--brand); border-color:var(--brand); background:var(--brand-soft);}
+  .toolbar .auth-btn{
+    font-size:13px; color:var(--sub); padding:8px 14px; border:1px solid var(--line);
+    border-radius:10px; cursor:pointer; background:#fff; user-select:none; white-space:nowrap;
+  }
+  .toolbar .auth-btn:hover{border-color:var(--brand); color:var(--brand);}
+  .toolbar .auth-btn.logged{color:var(--brand); border-color:var(--brand); background:var(--brand-soft);}
+  .editor .field input[type=password],.editor .field input[type=email]{
+    padding:9px 12px; border:1px solid var(--line); border-radius:10px; background:#faf9f5; font:inherit; outline:none;
+  }
+  .editor .field input:focus{border-color:var(--brand); background:#fff;}
+  .editor .hint.err{color:var(--danger);}
 
   /* 标签筛选胶囊 */
   .filters{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; align-items:center;}
@@ -180,6 +191,7 @@
   <div class="toolbar">
     <input type="search" id="search" placeholder="搜索标签、备注、来源（空格分隔 = 同时命中）" autocomplete="off">
     <div class="toggle" id="editToggle" title="开启后可点卡片右上角编辑">编辑模式</div>
+    <div class="auth-btn" id="authBtn" title="登录后才能编辑或删除案例">登录</div>
   </div>
 
   <div class="filters" id="filters"></div>
@@ -264,6 +276,31 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- 登录弹层 -->
+<div class="overlay" id="loginOverlay">
+  <div class="modal editor" id="loginModal">
+    <div class="mhead">
+      <span class="t">管理员登录</span>
+      <button class="close" id="btnLoginClose">&times;</button>
+    </div>
+    <div class="ebody">
+      <div class="field">
+        <label>邮箱</label>
+        <input id="loginEmail" type="email" autocomplete="username" placeholder="你的登录邮箱">
+      </div>
+      <div class="field">
+        <label>密码</label>
+        <input id="loginPass" type="password" autocomplete="current-password" placeholder="你的登录密码">
+      </div>
+      <div class="hint" id="loginHint">登录后即可编辑标签、删除案例。游客只能浏览。</div>
+    </div>
+    <div class="efoot">
+      <button class="cancel" id="btnLoginCancel">取消</button>
+      <button class="save" id="btnLoginSubmit">登录</button>
+    </div>
+  </div>
+</div>
+
 <script>
 'use strict';
 /* ---------- 配置 ---------- */
@@ -281,14 +318,15 @@ const state = {
   loop: true,
   editTarget: null,  // 正在编辑的片段
   editTags: [],      // 编辑中的标签数组
-  rate: 1            // 播放速率
+  rate: 1,           // 播放速率
+  session: null      // 登录会话（Supabase Auth session）
 };
 
 /* ---------- DOM ---------- */
 const $ = id => document.getElementById(id);
 const el = {
   meta: $('metaText'), err: $('errBox'),
-  search: $('search'), editToggle: $('editToggle'), filters: $('filters'), wall: $('wall'),
+  search: $('search'), editToggle: $('editToggle'), authBtn: $('authBtn'), filters: $('filters'), wall: $('wall'),
   overlay: $('overlay'), playerBox: $('playerBox'), pTitle: $('pTitle'), pVideo: $('pVideo'), pLoading: $('pLoading'),
   playState: $('playState'),
   pTags: $('pTags'), pNote: $('pNote'), pSrc: $('pSrc'),
@@ -300,6 +338,8 @@ const el = {
   btnAddTag: $('btnAddTag'), eTagChips: $('eTagChips'), eNote: $('eNote'),
   btnEditClose: $('btnEditClose'), btnEditCancel: $('btnEditCancel'), btnEditSave: $('btnEditSave'),
   btnEditDelete: $('btnEditDelete'),
+  loginOverlay: $('loginOverlay'), loginEmail: $('loginEmail'), loginPass: $('loginPass'),
+  loginHint: $('loginHint'), btnLoginClose: $('btnLoginClose'), btnLoginCancel: $('btnLoginCancel'), btnLoginSubmit: $('btnLoginSubmit'),
   toast: $('toast')
 };
 
@@ -328,6 +368,93 @@ function clipText(c) {
   const s = c.source || {};
   parts.push(s.matchTitle, s.fileName);
   return parts.filter(Boolean).join(' ');
+}
+
+/* ---------- 认证 ---------- */
+const AUTH_KEY = 'tl_auth_session';
+
+/* 判断是否已登录（有有效 token） */
+function isLoggedIn() {
+  return !!(state.session && state.session.access_token);
+}
+/* 带认证的请求头（登录后写/删需要） */
+function authHeaders() {
+  const h = { apikey: SUPA_KEY, 'Content-Type': 'application/json' };
+  if (state.session && state.session.access_token) {
+    h.Authorization = 'Bearer ' + state.session.access_token;
+  }
+  return h;
+}
+/* 更新登录态 UI */
+function refreshAuthUI() {
+  const logged = isLoggedIn();
+  el.authBtn.textContent = logged ? (getEmail() + ' · 退出') : '登录';
+  el.authBtn.classList.toggle('logged', logged);
+  el.authBtn.title = logged ? '点击退出登录' : '登录后才能编辑或删除案例';
+  el.editToggle.style.display = logged ? '' : 'none';
+  if (!logged) { state.editing = false; el.editToggle.classList.remove('on'); }
+}
+function getEmail() {
+  return (state.session && state.session.user && state.session.user.email) || '';
+}
+/* 登录 */
+async function doLogin() {
+  const email = el.loginEmail.value.trim();
+  const pass = el.loginPass.value;
+  if (!email || !pass) { el.loginHint.textContent = '请输入邮箱和密码'; el.loginHint.classList.add('err'); return; }
+  el.loginHint.textContent = '登录中…';
+  el.loginHint.classList.remove('err');
+  try {
+    const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=password', {
+      method: 'POST',
+      headers: { apikey: SUPA_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password: pass })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const msg = (data && (data.error_description || data.msg)) || ('登录失败 HTTP ' + res.status);
+      el.loginHint.textContent = '登录失败：' + msg;
+      el.loginHint.classList.add('err');
+      return;
+    }
+    state.session = { access_token: data.access_token, refresh_token: data.refresh_token, user: data.user };
+    localStorage.setItem(AUTH_KEY, JSON.stringify(state.session));
+    closeLogin();
+    refreshAuthUI();
+    toast('已登录：' + getEmail());
+  } catch (e) {
+    el.loginHint.textContent = '网络错误：' + e.message;
+    el.loginHint.classList.add('err');
+  }
+}
+function logout() {
+  state.session = null;
+  localStorage.removeItem(AUTH_KEY);
+  state.editing = false;
+  el.editToggle.classList.remove('on');
+  refreshAuthUI();
+  renderWall();
+  toast('已退出登录');
+}
+function openLogin() {
+  el.loginHint.textContent = '登录后即可编辑标签、删除案例。游客只能浏览。';
+  el.loginHint.classList.remove('err');
+  el.loginEmail.value = '';
+  el.loginPass.value = '';
+  el.loginOverlay.classList.add('show');
+  el.loginEmail.focus();
+}
+function closeLogin() {
+  el.loginOverlay.classList.remove('show');
+}
+/* 恢复本地登录态 */
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem(AUTH_KEY);
+    if (raw) state.session = JSON.parse(raw);
+  } catch (_) {}
+  if (state.session && !state.session.access_token) state.session = null;
+  refreshAuthUI();
 }
 
 /* ---------- 加载 ---------- */
@@ -465,7 +592,7 @@ function renderWall() {
     const editBtn = document.createElement('button');
     editBtn.className = 'edit';
     editBtn.textContent = '编辑';
-    editBtn.style.display = state.editing ? '' : 'none';
+    editBtn.style.display = (state.editing && isLoggedIn()) ? '' : 'none';
     editBtn.addEventListener('click', e => { e.stopPropagation(); openEditor(c); });
     foot.appendChild(editBtn);
     body.appendChild(foot);
@@ -494,6 +621,7 @@ function openPlayer(c) {
   el.pNote.textContent = c.note && c.note !== c.title ? c.note : '';
   const s = c.source || {};
   el.pSrc.textContent = s.matchTitle ? ('来源：' + s.matchTitle + (s.start != null ? ' · ' + fmtTime(s.start) : '')) : '';
+  el.pEdit.style.display = isLoggedIn() ? '' : 'none';
   setRate(1);
   setPlayIcon(false);
   loadVideo();
@@ -607,20 +735,16 @@ function renderEditTags() {
 async function saveEdit() {
   const c = state.editTarget;
   if (!c) return;
+  if (!isLoggedIn()) { toast('请先登录'); openLogin(); return; }
   const title = el.eTitle.value.trim();
   const note = el.eNote.value.trim();
   const tags = state.editTags.filter(t => t.value);
   const res = await fetch(SUPA_URL + '/rest/v1/clips?id=eq.' + encodeURIComponent(c.id), {
     method: 'PATCH',
-    headers: {
-      apikey: SUPA_KEY,
-      Authorization: 'Bearer ' + SUPA_KEY,
-      'Content-Type': 'application/json',
-      Prefer: 'return=minimal'
-    },
+    headers: { ...authHeaders(), Prefer: 'return=minimal' },
     body: JSON.stringify({ title, note, tags })
   });
-  if (!res.ok) { toast('保存失败：HTTP ' + res.status); return; }
+  if (!res.ok) { toast('保存失败：HTTP ' + res.status + (res.status === 401 ? '（登录已过期，请重新登录）' : '')); return; }
   Object.assign(c, { title, note, tags });
   closeEditor();
   renderWall();
@@ -631,12 +755,13 @@ async function saveEdit() {
 async function deleteClip() {
   const c = state.editTarget;
   if (!c) return;
+  if (!isLoggedIn()) { toast('请先登录'); openLogin(); return; }
   if (!confirm('确定删除案例「' + (c.title || c.folder || '未命名') + '」？\n\n这会从在线库移除该记录（R2 上的视频文件会保留，可后续统一清理）。')) return;
   const res = await fetch(SUPA_URL + '/rest/v1/clips?id=eq.' + encodeURIComponent(c.id), {
     method: 'DELETE',
-    headers: { apikey: SUPA_KEY, Authorization: 'Bearer ' + SUPA_KEY, Prefer: 'return=minimal' }
+    headers: { ...authHeaders(), Prefer: 'return=minimal' }
   });
-  if (!res.ok) { toast('删除失败：HTTP ' + res.status); return; }
+  if (!res.ok) { toast('删除失败：HTTP ' + res.status + (res.status === 401 ? '（登录已过期，请重新登录）' : '')); return; }
   state.clips = state.clips.filter(x => x.id !== c.id);
   closeEditor();
   closePlayer();
@@ -647,10 +772,18 @@ async function deleteClip() {
 /* ---------- 事件绑定 ---------- */
 el.search.addEventListener('input', applyFilters);
 el.editToggle.addEventListener('click', () => {
+  if (!isLoggedIn()) { toast('请先登录'); openLogin(); return; }
   state.editing = !state.editing;
   el.editToggle.classList.toggle('on', state.editing);
   renderWall();
 });
+el.authBtn.addEventListener('click', () => { isLoggedIn() ? logout() : openLogin(); });
+el.btnLoginSubmit.addEventListener('click', doLogin);
+el.btnLoginClose.addEventListener('click', closeLogin);
+el.btnLoginCancel.addEventListener('click', closeLogin);
+el.loginOverlay.addEventListener('click', e => { if (e.target === el.loginOverlay) closeLogin(); });
+el.loginPass.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
+el.loginEmail.addEventListener('keydown', e => { if (e.key === 'Enter') doLogin(); });
 el.pPrev.addEventListener('click', () => navPlayer(-1));
 el.pNext.addEventListener('click', () => navPlayer(1));
 el.pPlay.addEventListener('click', togglePlay);
@@ -724,6 +857,7 @@ function tickTime() {
 
 /* ---------- 启动 ---------- */
 (async function init() {
+  restoreSession();
   try {
     state.clips = await loadClips();
     applyFilters();
