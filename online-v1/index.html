@@ -532,28 +532,21 @@ function renderWall() {
 
     const thumb = document.createElement('div');
     thumb.className = 'thumb';
-    const v = document.createElement('video');
-    v.muted = true; v.playsInline = true; v.preload = 'metadata';
-    v.src = c.video_url + '#t=0.001';
-    v.addEventListener('loadeddata', () => { v.currentTime = 0.001; });
-    v.addEventListener('seeked', () => {
-      const canvas = document.createElement('canvas');
-      canvas.width = 320; canvas.height = 180;
-      canvas.getContext('2d').drawImage(v, 0, 0, canvas.width, canvas.height);
-      v.style.display = 'none';
-      const img = document.createElement('img');
-      img.src = canvas.toDataURL('image/jpeg', 0.7);
-      img.style.cssText = 'width:100%;height:100%;object-fit:cover;display:block;';
-      thumb.insertBefore(img, thumb.firstChild);
-      v.remove();
-    });
-    v.addEventListener('error', () => {
-      v.remove();
-      const ph = thumb.querySelector('.ph'); if (ph) ph.textContent = '缩略图加载失败';
-    });
-    thumb.appendChild(v);
     const ph = document.createElement('div');
     ph.className = 'ph'; ph.textContent = '加载缩略图…';
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'metadata';
+    v.src = c.video_url;
+    /* 不用 canvas 导出图片：R2 未开跨域时 canvas 会被污染、toDataURL 直接抛异常。
+       直接让 video 元素渲染第一帧当封面（需要真实触发一次 seek 才会解码出画面） */
+    v.addEventListener('loadedmetadata', () => { try { v.currentTime = 0.001; } catch (_) {} });
+    v.addEventListener('seeked', () => { if (ph.parentNode) ph.remove(); });
+    v.addEventListener('loadeddata', () => { if (ph.parentNode) ph.remove(); });
+    v.addEventListener('error', () => {
+      v.remove();
+      ph.textContent = '缩略图加载失败';
+    });
+    thumb.appendChild(v);
     thumb.appendChild(ph);
     const dur = document.createElement('span');
     dur.className = 'dur';
