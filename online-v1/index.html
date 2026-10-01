@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>战术在线案例库</title>
+<title>篮球案例库</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='14' fill='%23f59e0b'/%3E%3Cpath d='M2 16h28M16 2c4 4 4 24 0 28M16 2c-4 4-4 24 0 28M4 7c8 5 16 5 24 0M4 25c8-5 16-5 24 0' stroke='%231a1206' stroke-width='1.4' fill='none'/%3E%3C/svg%3E">
 <style>
   :root{
@@ -182,7 +182,7 @@
 <body>
 <div class="wrap">
   <header class="top">
-    <h1>战术在线案例库</h1>
+    <h1>篮球案例库</h1>
     <span class="meta" id="metaText">正在加载…</span>
   </header>
 
@@ -254,7 +254,7 @@
       <div class="field">
         <label>标签（格式：维度:值，用空格或回车分隔；也可以直接写「挡拆」）</label>
         <div class="tagrow" id="tagRow">
-          <input id="eTagInput" autocomplete="off" placeholder="战术:挡拆 下顺 球队:勇士">
+          <input id="eTagInput" autocomplete="off" placeholder="标签（空格分隔），如：挡拆 反跑 失误漏人">
           <button id="btnAddTag" type="button">加标签</button>
         </div>
         <div class="chips" id="eTagChips" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
@@ -263,7 +263,7 @@
         <label>备注</label>
         <textarea id="eNote" placeholder="一句话讲清楚这个回合在做什么"></textarea>
       </div>
-      <div class="hint">标签建议拆成维度：战术 / 球员 / 球队 / 防守 / 区域 等，方便以后组合检索。</div>
+      <div class="hint">标签就是关键词，空格分隔即可，如：挡拆、反跑、失误漏人、蛋蛋。不需要带维度前缀。</div>
     </div>
     <div class="efoot">
       <button class="danger" id="btnEditDelete">删除案例</button>
@@ -477,7 +477,7 @@ function buildFilters() {
   el.filters.innerHTML = '';
   const label = document.createElement('span');
   label.className = 'label';
-  label.textContent = '按战术筛选：';
+  label.textContent = '按标签筛选：';
   el.filters.appendChild(label);
   const all = document.createElement('span');
   all.className = 'pill' + (state.activeTags.size === 0 ? ' on' : '');
@@ -566,7 +566,7 @@ function renderWall() {
     (c.tags || []).forEach(t => {
       const chip = document.createElement('span');
       chip.className = 'chip dim';
-      chip.textContent = t.dimension + ':' + t.value;
+      chip.textContent = (t.dimension ? t.dimension + ':' : '') + t.value;
       chips.appendChild(chip);
     });
     body.appendChild(chips);
@@ -608,7 +608,7 @@ function openPlayer(c) {
   (c.tags || []).forEach(t => {
     const chip = document.createElement('span');
     chip.className = 'chip dim';
-    chip.textContent = t.dimension + ':' + t.value;
+    chip.textContent = (t.dimension ? t.dimension + ':' : '') + t.value;
     el.pTags.appendChild(chip);
   });
   el.pNote.textContent = c.note && c.note !== c.title ? c.note : '';
@@ -695,14 +695,10 @@ function addTagFromInput() {
   if (!raw) return;
   raw.split(/\s+/).forEach(piece => {
     if (!piece) return;
-    let dimension = '', value = piece;
-    if (piece.includes(':')) {
-      const i = piece.indexOf(':');
-      dimension = piece.slice(0, i).trim();
-      value = piece.slice(i + 1).trim();
-    }
+    const value = piece.trim();
     if (!value) return;
-    if (!state.editTags.some(t => t.dimension === dimension && t.value === value)) {
+    const dimension = '';
+    if (!state.editTags.some(t => t.value === value)) {
       state.editTags.push({ dimension, value });
     }
   });
