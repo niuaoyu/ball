@@ -208,7 +208,7 @@
     </div>
     <div class="mbody">
       <div class="player" id="playerBox">
-        <video id="pVideo" playsinline preload="auto"></video>
+        <video id="pVideo" playsinline controls preload="auto"></video>
         <div class="loading" id="pLoading">加载中…</div>
         <div class="playstate" id="playState">▶</div>
       </div>
@@ -219,11 +219,11 @@
       </div>
     </div>
     <div class="pbar">
-      <button id="pPrevFrame" title="后退约一帧（←）">← 退一帧</button>
+      <button id="pPrevFrame" title="后退 0.5 秒（←）">← −0.5s</button>
       <button id="pBack1s" title="后退 1 秒（Shift+←）">−1s</button>
       <button id="pPlay" class="primary" title="播放/暂停 (Space)">播放 <kbd>Space</kbd></button>
       <button id="pFwd1s" title="前进 1 秒（Shift+→）">+1s</button>
-      <button id="pNextFrame" title="前进约一帧（→）">进一帧 →</button>
+      <button id="pNextFrame" title="前进 0.5 秒（→）">+0.5s →</button>
       <button id="pLoop" class="on" title="循环片段">循环片段</button>
       <span class="speed-group" id="speedGroup">
         <button class="speed" data-rate="0.25">0.25x</button>
@@ -306,7 +306,7 @@
 /* ---------- 配置 ---------- */
 const SUPA_URL = 'https://xzfnznwovpfovyssolrb.supabase.co';
 const SUPA_KEY = 'sb_publishable_NRdVd7YIdp_aJfpG5cH-BQ_MqM1U3US';
-const FRAME = 1 / 30;   // 约一帧的步长（秒），知道视频实际帧率后可改
+const STEP = 0.5;       // 方向键 / 前后按钮的步长（秒）
 
 /* ---------- 状态 ---------- */
 const state = {
@@ -778,14 +778,14 @@ el.pNext.addEventListener('click', () => navPlayer(1));
 el.pPlay.addEventListener('click', togglePlay);
 el.pLoop.addEventListener('click', toggleLoop);
 el.pEdit.addEventListener('click', () => openEditor(state.current));
-el.pPrevFrame.addEventListener('click', () => step(-FRAME));
+el.pPrevFrame.addEventListener('click', () => step(-STEP));
 el.pBack1s.addEventListener('click', () => step(-1));
 el.pFwd1s.addEventListener('click', () => step(1));
-el.pNextFrame.addEventListener('click', () => step(FRAME));
+el.pNextFrame.addEventListener('click', () => step(STEP));
 el.speedGroup.querySelectorAll('.speed').forEach(b => {
   b.addEventListener('click', () => setRate(parseFloat(b.dataset.rate)));
 });
-el.playerBox.addEventListener('click', e => { if (e.target === el.pVideo || e.target === el.playerBox) togglePlay(); });
+// 使用 video 原生 controls 处理播放/暂停和进度拖动，避免自定义点击逻辑干扰进度条。
 el.btnClose.addEventListener('click', closePlayer);
 el.overlay.addEventListener('click', e => { if (e.target === el.overlay) closePlayer(); });
 el.btnEditClose.addEventListener('click', closeEditor);
@@ -813,10 +813,10 @@ window.addEventListener('keydown', e => {
       case ',': navPlayer(-1); break;
       case '.': navPlayer(1); break;
       case 'ArrowLeft':
-        if (e.shiftKey) step(-1); else step(-FRAME);
+        if (e.shiftKey) step(-1); else step(-STEP);
         break;
       case 'ArrowRight':
-        if (e.shiftKey) step(1); else step(FRAME);
+        if (e.shiftKey) step(1); else step(STEP);
         break;
       case 'j': case 'J':
         setRate(state.rate > 0.5 ? state.rate / 2 : 0.25);
