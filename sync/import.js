@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /*
- * import.js — 微博视频导入本地库（两种模式）
+ * import.js — 微博 / 腾讯视频导入本地库（两种模式）
  *
  * 模式一：直接下载整条视频（先下后标）
- *   node import.js http://t.cn/xxxx            # 默认 720p，也可 480/1080
- *   node import.js https://weibo.com/tv/show/1034:xxx
+ *   node import.js http://t.cn/xxxx            # 微博，默认 720p，也可 480/1080
+ *   node import.js https://v.qq.com/x/cover/... # 腾讯单视频页
  *
  * 模式二：消费待导入队列（微博页标记 → 电脑端按需裁剪，路线 A）
  *   node import.js --queue                     # 拉 pending 队列，逐条只下载片段区间
@@ -17,7 +17,7 @@
  *   3. 落盘成 sync.js 认识的 clips/{文件夹}/视频+meta.json 结构
  *   4. 把该条 status 置为 done（service_role 写）
  */
-const { execFileSync, spawn } = require('child_process');
+const { execFileSync, execSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -100,6 +100,27 @@ async function resolveShortLink(url) {
     current = next;
   }
   throw new Error('无法从链接解析出微博视频 fid（可能不是视频短链，或链接已失效）');
+}
+
+/* ---------- 统一来源解析 ---------- */
+async function resolveInput(input) {
+  if (/^https?:\/\/v\.qq\.com\/x\/(?:cover|page)\//i.test(input)) {
+    return {
+      provider: 'tencent',
+      canonical: input,
+      fid: null,
+      videoId: (input.match(/\/([a-z0-9]+)\.html(?:[?#]|$)/i) || [])[1] || null
+    };
+  }
+  const wb = await resolveShortLink(input);
+  return { provider: 'weibo', canonical: wb.canonical, fid: wb.fid, videoId: null };
+}
+
+function queueSourceUrl(item) {
+  const url = item.source_url || item.page_url;
+  if (url) return url;
+  if (item.fid) return `https://weibo.com/tv/show/${item.fid}`;
+  throw new Error('队列项缺少 source_url/page_url/fid');
 }
 
 /* ---------- 工具 ---------- */
@@ -195,11 +216,16 @@ function writeClip(item, videoPath) {
   const finalPath = path.join(folderPath, finalName);
   fs.renameSync(videoPath, finalPath);
 
+  const provider = item.provider || (item.fid ? 'weibo' : 'unknown');
+  const sourceUrl = item.source_url || item.page_url || '';
+  const sourceId = item.fid || item.video_id || item.id;
   const src = {
-    matchId: 'weibo-' + item.fid,
+    matchId: provider + '-' + sourceId,
     matchTitle: item.title || '',
-    url: item.page_url || '',
-    fid: item.fid,
+    url: sourceUrl,
+    provider,
+    fid: item.fid || null,
+    videoId: item.video_id || null,
     start: r3(item.start_sec),
     end: r3(item.end_sec)
   };
@@ -219,9 +245,9 @@ function writeClip(item, videoPath) {
 /* ---------- 模式一：直接下载整条 ---------- */
 async function modeDirect(input, qualityArg) {
   const quality = qualityArg === '480' ? 'mp4_hd' : qualityArg === '1080' ? 'mp4_1080p' : 'mp4_720p';
-  console.log('[1/3] 解析短链…');
-  const { fid, canonical } = await resolveShortLink(input);
-  console.log('      fid =', fid);
+  console.log('[1/3] 解析视频来源…');
+  const { provider, fid, videoId, canonical } = await resolveInput(input);
+  console.log('      来源 =', provider, fid ? `· fid = ${fid}` : (videoId ? `· videoId = ${videoId}` : ''));
 
   const ytDlp = findYtDlp();
   const ffmpegDir = findFfmpegDir();
@@ -259,13 +285,54 @@ async function modeDirect(input, qualityArg) {
   const sizeMB = (fs.statSync(full).size / 1024 / 1024).toFixed(1);
   const metaPath = full.replace(/\.(mp4|mkv|webm)$/i, '') + '.meta.json';
   fs.writeFileSync(metaPath, JSON.stringify({
-    source: 'weibo', fid, url: info.webpage_url, originalShortLink: input,
+    source: provider, fid: fid || null, videoId: videoId || null,
+    url: info.webpage_url || canonical, originalUrl: input, originalShortLink: input,
     title: info.title, uploader: info.uploader, duration: info.duration,
     importedAt: new Date().toISOString()
   }, null, 2));
   console.log(`\n完成：${full}（${sizeMB} MB）`);
   console.log(`来源记录：${metaPath}`);
   console.log('\n下一步：在本地 tactic-lab 里打开这个视频标注 → node sync.js 上线');
+}
+
+/* ---------- 模式三：命令行直接传起止时间裁剪（路线 A） ---------- */
+async function modeClip(input, startSec, endSec) {
+  const start = parseFloat(startSec), end = parseFloat(endSec);
+  if (!isFinite(start) || !isFinite(end) || end <= start) {
+    console.error('起止时间无效：请用「node import.js <链接> <起秒> <止秒>」，例如 52.23 65');
+    process.exit(1);
+  }
+  console.log(`[1/3] 解析视频来源…`);
+  const { provider, canonical } = await resolveInput(input);
+  console.log('      来源 =', provider);
+
+  const ytDlp = findYtDlp();
+  const ffmpegDir = findFfmpegDir();
+
+  // 腾讯是 m3u8（每段 12s）：起止点落在同一分段内时，yt-dlp 只下一个 ts 分段，重编码切不出正确区间。
+  const SEG = 12;
+  const span = end - start;
+  if (provider === 'tencent' && span < SEG) {
+    console.warn(`  ⚠ 腾讯 m3u8 每段 ${SEG}s，起止点间隔 ${span.toFixed(2)}s < ${SEG}s，可能裁不准。`);
+    console.warn('    建议放宽到跨分段（>12s），或手动把终点扩大。继续尝试…\n');
+  }
+
+  console.log(`[2/3] 裁剪区间 ${r3(start)}s → ${r3(end)}s（${span.toFixed(2)}s）…`);
+  const formatSel = provider === 'tencent'
+    ? 'best[height<=720]/bestvideo[height<=720]+bestaudio/best'
+    : 'mp4_720p';
+
+  fs.mkdirSync(CLIPS_DIR, { recursive: true });
+  const stamp = Date.now().toString(36);
+  const outName = 'clip-' + stamp + '.mp4';
+  const outPath = path.join(CLIPS_DIR, outName);
+
+  await downloadSection(ytDlp, ffmpegDir, canonical, start, end, formatSel, outPath);
+
+  const sizeMB = (fs.statSync(outPath).size / 1048576).toFixed(2);
+  console.log(`\n[3/3] 完成：${outPath}（${sizeMB} MB）`);
+  console.log('下一步：在本地 tactic-lab 里打开这个片段标注 → node sync.js 上线');
+  console.log('（或直接跑 node sync.js，把片段按 meta.json 入库）');
 }
 
 /* ---------- 模式二：消费队列 ---------- */
@@ -296,6 +363,12 @@ async function modeQueue(qualityArg, dry) {
   let ok = 0, fail = 0, skipped = 0;
   for (const item of pending) {
     const label = item.id + '（' + r3(item.start_sec) + 's→' + r3(item.end_sec) + 's）';
+    const provider = item.provider || (item.fid ? 'weibo' : 'unknown');
+    // 腾讯 vqq 的 format_id 不是微博的 mp4_720p，而是动态的 m3u8 格式；
+    // 用分辨率选择器避免把腾讯队列误传给微博专用 format_id。
+    const formatSel = provider === 'tencent'
+      ? 'best[height<=720]/bestvideo[height<=720]+bestaudio/best'
+      : quality;
 
     /* 台账里已有且文件在盘上：跳过下载，只补云端标记 */
     const rec = ledger[item.id];
@@ -311,9 +384,9 @@ async function modeQueue(qualityArg, dry) {
     console.log('\n处理：' + label);
     let produced = null;
     try {
-      const canonical = `https://weibo.com/tv/show/${item.fid}`;
+      const sourceUrl = queueSourceUrl(item);
       const tmpOut = path.join(CLIPS_DIR, item.id + '.tmp.mp4');
-      await downloadSection(ytDlp, ffmpegDir, canonical, item.start_sec, item.end_sec, quality, tmpOut);
+      await downloadSection(ytDlp, ffmpegDir, sourceUrl, item.start_sec, item.end_sec, formatSel, tmpOut);
       produced = writeClip(item, tmpOut);
       ledger[item.id] = { folder: produced.folder, at: new Date().toISOString() };
       writeLedger(ledger);
@@ -351,9 +424,15 @@ async function main() {
   const input = args[0];
   if (!input) {
     console.log('用法:');
-    console.log('  node import.js <微博短链/视频页链接> [480|720|1080]   下载整条视频');
-    console.log('  node import.js --queue [480|720|1080] [--dry-run]        消费待导入队列');
+    console.log('  node import.js <微博/腾讯视频页链接> [480|720|1080]          下载整条视频');
+    console.log('  node import.js <链接> <起秒> <止秒>                           直接裁剪区间（腾讯推荐）');
+    console.log('  node import.js --queue [480|720|1080] [--dry-run]             消费待导入队列');
     process.exit(1);
+  }
+  // 第二个参数是数字 = 命令行裁剪模式（路线 A）
+  if (args[1] && /^\d+(\.\d+)?$/.test(args[1])) {
+    await modeClip(input, args[1], args[2]);
+    return;
   }
   await modeDirect(input, args[1]);
 }
