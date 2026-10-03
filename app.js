@@ -18,6 +18,10 @@ const DRAFT_KEY = 'tactic-lab:draft';
 const RATES = [0.25, 0.5, 1];
 const DEFAULT_DIMS = ['战术', '掩护人', '持球人结果', '掩护人结果', '防守', '进攻区域', '球队', '球员'];
 
+/* ---------- 远端队列（入队上传到 pending_imports，供 import.js --queue 消费） ---------- */
+const SUPABASE_URL = 'https://xzfnznwovpfovyssolrb.supabase.co';
+const ANON_KEY = 'sb_publishable_NRdVd7YIdp_aJfpG5cH-BQ_MqM1U3US';
+
 /* 预登记的本机比赛（首次启动自动写入数据库，选一次文件即可关联） */
 const PRESEED_MATCHES = [
   {
@@ -78,6 +82,7 @@ const els = {
   labelB: $('labelB'),
   btnClearAB: $('btnClearAB'),
   btnSave: $('btnSave'),
+  btnQueue: $('btnQueue'),
   btnPrevFrame: $('btnPrevFrame'),
   btnBack1s: $('btnBack1s'),
   btnPlay: $('btnPlay'),
@@ -692,6 +697,58 @@ function resetDraftForm() {
 }
 
 /* =========================================================
+ * 入队上传：把当前 A/B 片段写入远端 pending_imports 队列，
+ * 供电脑端 node import.js --queue 下载裁剪 + node sync.js 上线
+ * ========================================================= */
+async function queueClip() {
+  if (els.tagInput.value.trim()) addTagsFromInput();
+  if (state.A == null || state.B == null) return toast('先用 I / O 标记开始和结束');
+  const start = r3(Math.min(state.A, state.B));
+  const end = r3(Math.max(state.A, state.B));
+  const match = matchById(state.currentMatchId) || {};
+  const title = match.title || (state.currentFile ? state.currentFile.name.replace(/\.[^.]+$/, '') : '');
+  const note = els.noteInput.value.trim();
+  const tags = state.draftTags.map(t => ({ dimension: t.dimension, value: t.value }));
+
+  // 本页面是「本地文件」场景，没有可下载的在线 URL；
+  // 用本地文件名做 source_url 占位，供 import.js 识别为「本地文件」来源。
+  const source_url = state.currentFile ? ('local://' + state.currentFile.name) : '';
+
+  els.btnQueue.disabled = true;
+  els.btnQueue.textContent = '入队中…';
+  try {
+    const res = await fetch(SUPABASE_URL + '/rest/v1/pending_imports', {
+      method: 'POST',
+      headers: {
+        'apikey': ANON_KEY,
+        'Authorization': 'Bearer ' + ANON_KEY,
+        'Content-Type': 'application/json',
+        'Prefer': 'return=minimal'
+      },
+      body: JSON.stringify({
+        id: uid('clip'),
+        provider: 'local',
+        source_url,
+        fid: null,
+        page_url: source_url,
+        title,
+        start_sec: start, end_sec: end,
+        mode: 'clip',
+        tags, note, status: 'pending'
+      })
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    toast('已入队 ✓ 回电脑跑 node import.js --queue 下载裁剪，再 node sync.js 上线');
+    resetDraftForm();
+  } catch (err) {
+    toast('入队失败：' + err.message);
+  } finally {
+    els.btnQueue.disabled = false;
+    els.btnQueue.textContent = '入队上传';
+  }
+}
+
+/* =========================================================
  * 搜索与结果
  * ========================================================= */
 function parseTerms(q) {
@@ -1027,6 +1084,7 @@ function bindEvents() {
   els.btnSetB.addEventListener('click', setB);
   els.btnClearAB.addEventListener('click', clearPoints);
   els.btnSave.addEventListener('click', saveClip);
+  els.btnQueue.addEventListener('click', queueClip);
 
   els.btnPlay.addEventListener('click', togglePlay);
   els.btnPrevFrame.addEventListener('click', () => step(-FRAME));
@@ -1102,6 +1160,7 @@ function bindEvents() {
       case 'arrowright': e.preventDefault(); step(e.shiftKey ? 1 : FRAME); break;
       case 'i': setA(); break;
       case 'o': setB(); break;
+      case 'q': queueClip(); break;
       case 'enter': e.preventDefault(); saveClip(); break;
       case 'escape':
         if (state.editingClipId) cancelEdit();

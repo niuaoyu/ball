@@ -123,6 +123,26 @@ function queueSourceUrl(item) {
   throw new Error('队列项缺少 source_url/page_url/fid');
 }
 
+/* 判断队列项是否为「本地文件」来源（provider=local 或 source_url 以 local:// 开头） */
+function isLocalItem(item) {
+  const url = item.source_url || item.page_url || '';
+  return item.provider === 'local' || /^local:\/\//i.test(url);
+}
+
+/* 从 local://文件名 解析出本地视频绝对路径（在 VIDEOS_DIR 下找同名文件） */
+function resolveLocalPath(url) {
+  const name = decodeURIComponent((url || '').replace(/^local:\/\//i, ''));
+  if (!name) throw new Error('本地来源缺少文件名');
+  const p = path.join(VIDEOS_DIR, name);
+  if (fs.existsSync(p)) return p;
+  // 兜底：全盘在 VIDEOS_DIR 里模糊匹配文件名
+  try {
+    const hit = fs.readdirSync(VIDEOS_DIR).find(f => f === name || f.toLowerCase() === name.toLowerCase());
+    if (hit) return path.join(VIDEOS_DIR, hit);
+  } catch (_) {}
+  throw new Error('找不到本地视频文件：' + name + '（请把文件放到 ' + VIDEOS_DIR + '）');
+}
+
 /* ---------- 工具 ---------- */
 function sanitize(name) {
   return (name || '').replace(/[\\/:*?"<>|\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'untitled';
@@ -203,6 +223,31 @@ function downloadSection(ytDlp, ffmpegDir, canonical, start, end, quality, outPa
       process.stdout.write('\n');
       if (code === 0) resolve();
       else reject(new Error('yt-dlp 退出码 ' + code));
+    });
+  });
+}
+
+/* ---------- 本地文件裁剪（ffmpeg 直接裁，无需下载） ---------- */
+function cutLocalFile(ffmpegDir, localPath, start, end, outPath) {
+  return new Promise((resolve, reject) => {
+    const ffmpeg = ffmpegDir ? path.join(ffmpegDir, 'ffmpeg.exe') : 'ffmpeg';
+    // 精确裁剪：-ss 放在 -i 之后保证精确 seek（牺牲一点速度换精度），
+    // -c copy 快但可能不准，这里用重编码保证帧级精确。
+    const args = [
+      '-ss', String(r3(start)),
+      '-to', String(r3(end)),
+      '-i', localPath,
+      '-c:v', 'libx264', '-preset', 'fast', '-crf', '20',
+      '-c:a', 'aac',
+      '-movflags', '+faststart',
+      '-y', outPath
+    ];
+    const child = spawn(ffmpeg, args, { stdio: ['ignore', 'ignore', 'pipe'] });
+    let err = '';
+    child.stderr.on('data', d => { err = (err + d.toString()).slice(-2000); });
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error('ffmpeg 裁剪失败（退出码 ' + code + '）：' + err.slice(-300)));
     });
   });
 }
@@ -335,6 +380,49 @@ async function modeClip(input, startSec, endSec) {
   console.log('（或直接跑 node sync.js，把片段按 meta.json 入库）');
 }
 
+/* ---------- 下载整条视频（供队列 mode=full 使用） ---------- */
+async function downloadFullVideo(ytDlp, ffmpegDir, canonical, title) {
+  const json = execFileSync(ytDlp, ['--dump-json', '--no-warnings', canonical], {
+    encoding: 'utf8', maxBuffer: 64 * 1024 * 1024
+  });
+  const info = JSON.parse(json);
+  const quality = 'mp4_720p';
+  const hasFormat = (info.formats || []).some(f => f.format_id === quality);
+  const formatSel = hasFormat ? quality : 'bestvideo*+bestaudio/best';
+
+  fs.mkdirSync(VIDEOS_DIR, { recursive: true });
+  const base = sanitize(title || info.title || 'weibo');
+  const outTemplate = path.join(VIDEOS_DIR, `${base}.%(ext)s`);
+
+  console.log(`     「${info.title}」 ${Math.round((info.duration || 0) / 60)} 分钟，下载完整视频 → ${VIDEOS_DIR}`);
+  await new Promise((res, rej) => {
+    const child = spawn(ytDlp, [
+      '-f', formatSel,
+      '--merge-output-format', 'mp4',
+      ...(ffmpegDir ? ['--ffmpeg-location', ffmpegDir] : []),
+      '-o', outTemplate,
+      '--no-playlist',
+      '--newline',
+      canonical
+    ], { stdio: 'inherit' });
+    child.on('close', c => c === 0 ? res() : rej(new Error('退出码 ' + c)));
+  });
+
+  const found = fs.readdirSync(VIDEOS_DIR).filter(f => f.startsWith(base) && /\.(mp4|mkv|webm)$/i.test(f));
+  if (!found.length) throw new Error('下载完成但找不到输出文件');
+  const file = found.sort((a, b) => fs.statSync(path.join(VIDEOS_DIR, b)).size - fs.statSync(path.join(VIDEOS_DIR, a)).size)[0];
+  const full = path.join(VIDEOS_DIR, file);
+  const sizeMB = (fs.statSync(full).size / 1024 / 1024).toFixed(1);
+  const metaPath = full.replace(/\.(mp4|mkv|webm)$/i, '') + '.meta.json';
+  fs.writeFileSync(metaPath, JSON.stringify({
+    source: 'weibo', fid: null,
+    url: info.webpage_url || canonical,
+    title: info.title, uploader: info.uploader, duration: info.duration,
+    importedAt: new Date().toISOString()
+  }, null, 2));
+  return { full, sizeMB, metaPath };
+}
+
 /* ---------- 模式二：消费队列 ---------- */
 async function modeQueue(qualityArg, dry) {
   const quality = qualityArg === '480' ? 'mp4_hd' : qualityArg === '1080' ? 'mp4_1080p' : 'mp4_720p';
@@ -347,7 +435,9 @@ async function modeQueue(qualityArg, dry) {
   }
   console.log('待处理 ' + pending.length + ' 条：\n');
   pending.forEach((it, i) => {
-    console.log(`  ${i + 1}. [${it.id}] ${it.title || '(无标题)'}  ${r3(it.start_sec)}s→${r3(it.end_sec)}s  ${(it.tags || []).map(t => t.value).join(' ')}`);
+    const isFull = it.mode === 'full';
+    const desc = isFull ? '完整视频' : (r3(it.start_sec) + 's→' + r3(it.end_sec) + 's');
+    console.log(`  ${i + 1}. [${it.id}] ${it.title || '(无标题)'}  ${desc}  ${(it.tags || []).map(t => t.value).join(' ')}`);
   });
 
   if (dry) {
@@ -362,7 +452,8 @@ async function modeQueue(qualityArg, dry) {
 
   let ok = 0, fail = 0, skipped = 0;
   for (const item of pending) {
-    const label = item.id + '（' + r3(item.start_sec) + 's→' + r3(item.end_sec) + 's）';
+    const isFull = item.mode === 'full';
+    const label = isFull ? item.id + '（完整视频）' : item.id + '（' + r3(item.start_sec) + 's→' + r3(item.end_sec) + 's）';
     const provider = item.provider || (item.fid ? 'weibo' : 'unknown');
     // 腾讯 vqq 的 format_id 不是微博的 mp4_720p，而是动态的 m3u8 格式；
     // 用分辨率选择器避免把腾讯队列误传给微博专用 format_id。
@@ -372,7 +463,7 @@ async function modeQueue(qualityArg, dry) {
 
     /* 台账里已有且文件在盘上：跳过下载，只补云端标记 */
     const rec = ledger[item.id];
-    if (rec && fs.existsSync(path.join(CLIPS_DIR, rec.folder, item.id + '.mp4'))) {
+    if (rec && !isFull && fs.existsSync(path.join(CLIPS_DIR, rec.folder, item.id + '.mp4'))) {
       console.log('\n跳过（本地已处理）：' + label + ' → ' + rec.folder);
       if (SERVICE_KEY) {
         try { await markDone(item.id); console.log('  ✓ 已补标记 done'); } catch (e) { console.log('  （补标记失败：' + e.message + '）'); }
@@ -382,16 +473,31 @@ async function modeQueue(qualityArg, dry) {
     }
 
     console.log('\n处理：' + label);
-    let produced = null;
     try {
-      const sourceUrl = queueSourceUrl(item);
-      const tmpOut = path.join(CLIPS_DIR, item.id + '.tmp.mp4');
-      await downloadSection(ytDlp, ffmpegDir, sourceUrl, item.start_sec, item.end_sec, formatSel, tmpOut);
-      produced = writeClip(item, tmpOut);
-      ledger[item.id] = { folder: produced.folder, at: new Date().toISOString() };
-      writeLedger(ledger);
-      const sizeMB = (fs.statSync(path.join(CLIPS_DIR, produced.folder, item.id + '.mp4')).size / 1048576).toFixed(2);
-      console.log('  ✓ 片段已落盘 ' + produced.folder + '（' + sizeMB + ' MB）');
+      if (isFull) {
+        // 完整视频下载：走 VIDEOS_DIR，不裁剪
+        const sourceUrl = queueSourceUrl(item);
+        const r = await downloadFullVideo(ytDlp, ffmpegDir, sourceUrl, item.title);
+        ledger[item.id] = { full: true, file: r.full, at: new Date().toISOString() };
+        writeLedger(ledger);
+        console.log('  ✓ 完整视频已落盘 ' + r.full + '（' + r.sizeMB + ' MB）');
+      } else {
+        const sourceUrl = queueSourceUrl(item);
+        const tmpOut = path.join(CLIPS_DIR, item.id + '.tmp.mp4');
+        if (isLocalItem(item)) {
+          // 本地文件：用 ffmpeg 直接裁，不走 yt-dlp 下载
+          const localPath = resolveLocalPath(sourceUrl);
+          console.log('  本地裁剪：' + localPath);
+          await cutLocalFile(ffmpegDir, localPath, item.start_sec, item.end_sec, tmpOut);
+        } else {
+          await downloadSection(ytDlp, ffmpegDir, sourceUrl, item.start_sec, item.end_sec, formatSel, tmpOut);
+        }
+        const produced = writeClip(item, tmpOut);
+        ledger[item.id] = { folder: produced.folder, at: new Date().toISOString() };
+        writeLedger(ledger);
+        const sizeMB = (fs.statSync(path.join(CLIPS_DIR, produced.folder, item.id + '.mp4')).size / 1048576).toFixed(2);
+        console.log('  ✓ 片段已落盘 ' + produced.folder + '（' + sizeMB + ' MB）');
+      }
       ok++;
     } catch (e) {
       console.log('  ✗ 失败：' + e.message);

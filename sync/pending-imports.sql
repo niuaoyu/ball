@@ -13,6 +13,7 @@ create table if not exists public.pending_imports (
   title       text default '',           -- 视频标题（脚本从 document.title 摘）
   start_sec   double precision not null, -- 片段起点（视频 currentTime，秒）
   end_sec     double precision not null, -- 片段终点（秒）
+  mode        text not null default 'clip', -- clip=裁剪片段 / full=下载完整视频
   tags        jsonb default '[]'::jsonb, -- [{dimension, value}]
   note        text default '',
   status      text not null default 'pending',  -- pending / done / failed
@@ -43,6 +44,7 @@ create policy "公开读待导入" on public.pending_imports
 -- 注意：旧 page_url / fid 数据继续保留，代码会自动兼容。
 alter table public.pending_imports add column if not exists provider text not null default 'weibo';
 alter table public.pending_imports add column if not exists source_url text;
+alter table public.pending_imports add column if not exists mode text not null default 'clip';
 alter table public.pending_imports alter column fid drop not null;
 alter table public.pending_imports alter column page_url drop not null;
 
