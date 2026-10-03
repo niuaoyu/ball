@@ -33,6 +33,10 @@ const http = require('http');
 const VIDEOS_DIR = process.env.VIDEOS_DIR || path.join(process.env.USERPROFILE || '', 'Downloads', 'videos');
 const PORT = parseInt(process.argv[2] || '8321', 10);
 
+// Supabase（用于「撤回入队」：删 pending_imports 里刚入队的那一条）
+const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
+const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
+
 /* ---------- 找 yt-dlp / ffmpeg（与 import.js 同一套逻辑） ---------- */
 function findYtDlp() {
   const localAppData = process.env.LOCALAPPDATA || '';
@@ -176,6 +180,47 @@ const server = http.createServer((req, res) => {
       download(url, parsed.title)
         .then(r => console.log('\n[bridge] ✅ 下载完成：' + r.file + '（' + r.sizeMB + ' MB）'))
         .catch(e => console.error('\n[bridge] ❌ 下载失败：' + e.message));
+    });
+    return;
+  }
+
+  if (req.method === 'POST' && req.url === '/delete') {
+    let body = '';
+    req.on('data', c => { body += c; if (body.length > 1e6) req.destroy(); });
+    req.on('end', async () => {
+      let parsed;
+      try { parsed = JSON.parse(body || '{}'); }
+      catch (_) { return reply(res, 400, { ok: false, error: '请求体不是合法 JSON' }); }
+
+      const id = (parsed.id || '').trim();
+      if (!id) return reply(res, 400, { ok: false, error: '缺少 id 字段' });
+
+      if (!SUPABASE_URL || !SERVICE_KEY) {
+        return reply(res, 500, { ok: false, error: '未配置 Supabase service_role 密钥' });
+      }
+
+      try {
+        const del = await fetch(SUPABASE_URL + '/rest/v1/pending_imports?id=eq.' + encodeURIComponent(id), {
+          method: 'DELETE',
+          headers: {
+            apikey: SERVICE_KEY,
+            Authorization: 'Bearer ' + SERVICE_KEY,
+            'Prefer': 'return=representation',
+            Accept: 'application/json'
+          }
+        });
+        const deleted = await del.json().catch(() => []);
+        const count = Array.isArray(deleted) ? deleted.length : 0;
+        if (del.ok && count > 0) {
+          reply(res, 200, { ok: true, deleted: count, message: '已撤回 ' + id });
+        } else if (del.ok) {
+          reply(res, 200, { ok: true, deleted: 0, message: '未找到该条（可能已被处理或已撤回）' });
+        } else {
+          reply(res, del.status, { ok: false, error: '删除失败 HTTP ' + del.status });
+        }
+      } catch (e) {
+        reply(res, 500, { ok: false, error: '删除异常：' + e.message });
+      }
     });
     return;
   }
