@@ -18,9 +18,8 @@ const DRAFT_KEY = 'tactic-lab:draft';
 const RATES = [0.25, 0.5, 1];
 const DEFAULT_DIMS = ['战术', '掩护人', '持球人结果', '掩护人结果', '防守', '进攻区域', '球队', '球员'];
 
-/* ---------- 远端队列（入队上传到 pending_imports，供 import.js --queue 消费） ---------- */
-const SUPABASE_URL = 'https://xzfnznwovpfovyssolrb.supabase.co';
-const ANON_KEY = 'sb_publishable_NRdVd7YIdp_aJfpG5cH-BQ_MqM1U3US';
+/* ---------- 本地 bridge 服务（入队/撤回/下载统一入口） ---------- */
+const BRIDGE = 'http://127.0.0.1:8321';
 
 /* 预登记的本机比赛（首次启动自动写入数据库，选一次文件即可关联） */
 const PRESEED_MATCHES = [
@@ -53,6 +52,7 @@ const state = {
   pendingClip: null,
   library: null,              // 库根目录 DirectoryHandle
   reviewMode: false,          // true = 正在播放已保存的片段文件
+  lastQueuedId: null,          // 最近一次入队的 id，供「撤回」
   liveRec: { active: false, valid: false, blob: null, start: null, recorder: null }
 };
 
@@ -83,6 +83,7 @@ const els = {
   btnClearAB: $('btnClearAB'),
   btnSave: $('btnSave'),
   btnQueue: $('btnQueue'),
+  btnUndoQueue: $('btnUndoQueue'),
   btnPrevFrame: $('btnPrevFrame'),
   btnBack1s: $('btnBack1s'),
   btnPlay: $('btnPlay'),
@@ -699,6 +700,7 @@ function resetDraftForm() {
 /* =========================================================
  * 入队上传：把当前 A/B 片段写入远端 pending_imports 队列，
  * 供电脑端 node import.js --queue 下载裁剪 + node sync.js 上线
+ * 统一走本地 bridge 服务（/queue），前端不再直连 Supabase。
  * ========================================================= */
 async function queueClip() {
   if (els.tagInput.value.trim()) addTagsFromInput();
@@ -717,35 +719,46 @@ async function queueClip() {
   els.btnQueue.disabled = true;
   els.btnQueue.textContent = '入队中…';
   try {
-    const res = await fetch(SUPABASE_URL + '/rest/v1/pending_imports', {
-      method: 'POST',
-      headers: {
-        'apikey': ANON_KEY,
-        'Authorization': 'Bearer ' + ANON_KEY,
-        'Content-Type': 'application/json',
-        'Prefer': 'return=minimal'
-      },
-      body: JSON.stringify({
-        id: uid('clip'),
-        provider: 'local',
-        source_url,
-        fid: null,
-        page_url: source_url,
-        title,
-        start_sec: start, end_sec: end,
-        mode: 'clip',
-        tags, note, status: 'pending'
-      })
+    const res = await bridge('/queue', {
+      provider: 'local',
+      source_url,
+      title,
+      start_sec: start, end_sec: end,
+      mode: 'clip',
+      tags, note
     });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res || !res.ok) throw new Error((res && res.error) || '入队失败');
+    state.lastQueuedId = res.id;
     toast('已入队 ✓ 回电脑跑 node import.js --queue 下载裁剪，再 node sync.js 上线');
     resetDraftForm();
   } catch (err) {
-    toast('入队失败：' + err.message);
+    toast('入队失败：' + err.message + '（请确认已启动 bridge 服务）');
   } finally {
     els.btnQueue.disabled = false;
     els.btnQueue.textContent = '入队上传';
   }
+}
+
+/* 撤回刚入队的那一条（走本地 bridge /delete） */
+async function undoQueue() {
+  if (!state.lastQueuedId) return toast('没有可撤回的入队记录');
+  try {
+    const res = await bridge('/delete', { id: state.lastQueuedId });
+    if (!res || !res.ok) throw new Error((res && res.error) || '撤回失败');
+    toast(res.deleted > 0 ? '已撤回 ✓ 该条已从队列移除' : '未找到该条（可能已处理）');
+    state.lastQueuedId = null;
+  } catch (err) {
+    toast('撤回失败：' + err.message);
+  }
+}
+
+/* 调用本地 bridge 服务（127.0.0.1:8321） */
+function bridge(endpoint, body) {
+  return fetch('http://127.0.0.1:8321' + endpoint, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body || {})
+  }).then(r => r.json()).catch(err => { throw err; });
 }
 
 /* =========================================================
@@ -1085,6 +1098,7 @@ function bindEvents() {
   els.btnClearAB.addEventListener('click', clearPoints);
   els.btnSave.addEventListener('click', saveClip);
   els.btnQueue.addEventListener('click', queueClip);
+  els.btnUndoQueue.addEventListener('click', undoQueue);
 
   els.btnPlay.addEventListener('click', togglePlay);
   els.btnPrevFrame.addEventListener('click', () => step(-FRAME));

@@ -1,8 +1,8 @@
 -- tactic-lab 待导入队列表
--- 用途：油猴脚本在微博 / 腾讯视频页标记片段后，把「来源页面地址 + 起止时间 + 标签」写进这里，
---       电脑端 node import.js --queue 批量消费，按需下载裁剪。
--- 安全模型：公开匿名可 INSERT（和 clips 表同样的公开可读思路），
---           但只有 service_role 能 UPDATE/DELETE（防止被篡改、被删）。
+-- 用途：前端（油猴脚本 / 本地 index.html）标记片段后，通过本地 bridge 服务（/queue）
+--       以 service_role 写入这里；电脑端 node import.js --queue 批量消费，按需下载裁剪。
+-- 安全模型：入队/撤回统一走本地 bridge（service_role），前端不再直连 Supabase。
+--           匿名仅保留只读（预演用）；只有 service_role 能写/改/删。
 
 create table if not exists public.pending_imports (
   id          text primary key,          -- 脚本生成的 clip 前缀 id（uid）

@@ -1,22 +1,28 @@
 #!/usr/bin/env node
 /*
- * bridge.js — 本地常驻服务：接收油猴脚本的「下载完整视频」请求，调 yt-dlp 下载到本地。
+ * bridge.js — 本地统一后台服务（球战术片段库的公共能力中枢）
  *
- * 用途：油猴脚本「下载完整视频」按钮 → POST 到本服务 → 本服务调 yt-dlp 下载整条视频
- *       到 Downloads/videos（不写 Supabase 队列、不推 R2，纯本地下载）。
+ * 职责：把所有「需要本机执行 / 需要 service_role 权限」的公共能力集中到这一处，
+ *       前端（油猴脚本、本地 index.html）只调用本服务的 REST 接口，不再各自重复
+ *       写 Supabase / yt-dlp 逻辑。
  *
- * 启动：node bridge.js            （默认监听 http://127.0.0.1:8321）
- *       node bridge.js 9000       （自定义端口）
+ * 接口（统一返回 { ok, ... }）：
+ *   GET  /ping       健康检查
+ *   POST /queue      入队（写 pending_imports，service_role）
+ *   POST /delete     撤回入队（删 pending_imports 指定 id，service_role）
+ *   POST /download   下载完整视频到本地（yt-dlp）
  *
- * 接口：POST /download  body: { url: string, title?: string }
- *       返回：{ ok: true, file, sizeMB } 或 { ok: false, error }
+ * 鉴权：校验请求来源必须是本机（Origin/Host 为 127.0.0.1 或 localhost，
+ *       或无 Origin 的本地命令行工具），拒绝其他域名网页借用户浏览器发起的请求。
  *
- * 安全：仅监听 127.0.0.1（本机），不做鉴权；任何本地程序/页面都能调用，属于本机信任边界。
+ * 启动：node bridge.js            默认 http://127.0.0.1:8321
+ *       node bridge.js 9000       自定义端口
  */
 const { execFileSync, spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const http = require('http');
+const crypto = require('crypto');
 
 /* ---------- .env ---------- */
 (function loadEnv() {
@@ -33,7 +39,7 @@ const http = require('http');
 const VIDEOS_DIR = process.env.VIDEOS_DIR || path.join(process.env.USERPROFILE || '', 'Downloads', 'videos');
 const PORT = parseInt(process.argv[2] || '8321', 10);
 
-// Supabase（用于「撤回入队」：删 pending_imports 里刚入队的那一条）
+// Supabase（入队 / 撤回，统一用 service_role，权限最高、不受 RLS 限制）
 const SUPABASE_URL = (process.env.SUPABASE_URL || '').replace(/\/+$/, '');
 const SERVICE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 
@@ -80,12 +86,44 @@ function sanitize(name) {
   return (name || '').replace(/[\\/:*?"<>|\r\n\t]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 60) || 'untitled';
 }
 
-/* ---------- 来源解析（微博 / 腾讯） ---------- */
+/* ---------- 本机来源校验 ---------- */
+function isLocalOrigin(req) {
+  const origin = req.headers.origin || '';
+  const host = req.headers.host || '';
+  // 无 Origin 头：本地命令行工具（curl 等），信任
+  if (!origin) return true;
+  // 有 Origin 头：必须是本机地址
+  try {
+    const u = new URL(origin);
+    return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '::1';
+  } catch (_) {
+    return false;
+  }
+}
+
+/* ---------- Supabase 通用请求（service_role） ---------- */
+async function supa(method, pathname, body) {
+  const res = await fetch(SUPABASE_URL + pathname, {
+    method,
+    headers: {
+      apikey: SERVICE_KEY,
+      Authorization: 'Bearer ' + SERVICE_KEY,
+      ...(body ? { 'Content-Type': 'application/json' } : {}),
+      Accept: 'application/json',
+      ...(body ? { 'Prefer': 'return=representation' } : {})
+    },
+    ...(body ? { body: JSON.stringify(body) } : {})
+  });
+  const txt = await res.text();
+  const data = txt ? JSON.parse(txt) : null;
+  return { status: res.status, ok: res.ok, data };
+}
+
+/* ---------- 来源解析（微博 / 腾讯 / 本地） ---------- */
 async function resolveSource(url) {
   if (/^https?:\/\/v\.qq\.com\/x\/(?:cover|page)\//i.test(url)) {
     return { provider: 'tencent', canonical: url };
   }
-  // 微博：直接拿原链接（含 fid 或 t.cn 短链都交给 yt-dlp 处理）
   return { provider: 'weibo', canonical: url };
 }
 
@@ -102,7 +140,6 @@ function download(url, title) {
       });
       const info = JSON.parse(json);
 
-      // 腾讯用分辨率选择器；微博用 mp4_720p（不存在则回退最佳）
       let formatSel;
       if (provider === 'tencent') {
         formatSel = 'best[height<=720]/bestvideo[height<=720]+bestaudio/best';
@@ -148,33 +185,117 @@ function download(url, title) {
   });
 }
 
+/* ---------- 生成入队 id ---------- */
+function uid(prefix) {
+  return prefix + '-' + Date.now().toString(36) + '-' + crypto.randomBytes(4).toString('hex');
+}
+
 /* ---------- HTTP 服务 ---------- */
 const server = http.createServer((req, res) => {
-  // CORS：允许任意来源（油猴 GM_xmlhttpRequest / fetch 需要）
+  // CORS：仅允许本机来源
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
 
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
+  // 鉴权：非本机来源一律拒绝（除了 /ping 健康检查，方便手动探测）
+  if (req.url !== '/ping' && !isLocalOrigin(req)) {
+    return reply(res, 403, { ok: false, error: '拒绝：请求来源不是本机' });
+  }
+
   if (req.method === 'GET' && req.url === '/ping') {
     res.writeHead(200, { 'Content-Type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, service: 'ball-bridge', videosDir: VIDEOS_DIR }));
+    res.end(JSON.stringify({ ok: true, service: 'ball-bridge', videosDir: VIDEOS_DIR, supabase: !!SUPABASE_URL }));
     return;
   }
 
-  if (req.method === 'POST' && req.url === '/download') {
-    let body = '';
-    req.on('data', c => { body += c; if (body.length > 1e6) req.destroy(); });
-    req.on('end', async () => {
-      let parsed;
-      try { parsed = JSON.parse(body || '{}'); }
-      catch (_) { return reply(res, 400, { ok: false, error: '请求体不是合法 JSON' }); }
+  /* 入队：写 pending_imports（service_role） */
+  if (req.method === 'POST' && req.url === '/queue') {
+    readBody(req, res, async parsed => {
+      if (!SUPABASE_URL || !SERVICE_KEY) {
+        return reply(res, 500, { ok: false, error: '未配置 Supabase service_role 密钥' });
+      }
+      const provider = (parsed.provider || '').trim();
+      const source_url = (parsed.source_url || '').trim();
+      const start = parseFloat(parsed.start_sec);
+      const end = parseFloat(parsed.end_sec);
+      const isFull = parsed.mode === 'full';
 
+      if (!provider) return reply(res, 400, { ok: false, error: '缺少 provider' });
+      if (!source_url && !parsed.fid) return reply(res, 400, { ok: false, error: '缺少 source_url/fid' });
+      if (!isFull && !(isFinite(start) && isFinite(end))) {
+        return reply(res, 400, { ok: false, error: '缺少有效的 start_sec/end_sec' });
+      }
+
+      const id = parsed.id || uid('clip');
+      const row = {
+        id,
+        provider,
+        source_url: source_url || null,
+        fid: parsed.fid || null,
+        page_url: source_url || parsed.page_url || null,
+        title: parsed.title || '',
+        start_sec: isFull ? 0 : start,
+        end_sec: isFull ? 0 : end,
+        mode: parsed.mode || 'clip',
+        tags: Array.isArray(parsed.tags) ? parsed.tags : [],
+        note: parsed.note || '',
+        status: 'pending'
+      };
+
+      try {
+        let r = await supa('POST', '/rest/v1/pending_imports', row);
+        // 兜底：如果数据库还没加 mode 列（旧表结构），去掉 mode 重试一次
+        if (!r.ok && r.data && r.data.code === 'PGRST204' && typeof r.data.message === 'string' && r.data.message.includes("'mode'")) {
+          const rowNoMode = { ...row };
+          delete rowNoMode.mode;
+          r = await supa('POST', '/rest/v1/pending_imports', rowNoMode);
+        }
+        if (r.ok) {
+          reply(res, 200, { ok: true, id, message: '已入队' });
+        } else {
+          reply(res, r.status, { ok: false, error: '入队失败 HTTP ' + r.status + (r.data && r.data.message ? '：' + r.data.message : '') });
+        }
+      } catch (e) {
+        reply(res, 500, { ok: false, error: '入队异常：' + e.message });
+      }
+    });
+    return;
+  }
+
+  /* 撤回：删 pending_imports 指定 id */
+  if (req.method === 'POST' && req.url === '/delete') {
+    readBody(req, res, async parsed => {
+      const id = (parsed.id || '').trim();
+      if (!id) return reply(res, 400, { ok: false, error: '缺少 id 字段' });
+      if (!SUPABASE_URL || !SERVICE_KEY) {
+        return reply(res, 500, { ok: false, error: '未配置 Supabase service_role 密钥' });
+      }
+      try {
+        const r = await supa('DELETE', '/rest/v1/pending_imports?id=eq.' + encodeURIComponent(id));
+        const count = Array.isArray(r.data) ? r.data.length : 0;
+        if (r.ok && count > 0) {
+          reply(res, 200, { ok: true, deleted: count, message: '已撤回 ' + id });
+        } else if (r.ok) {
+          reply(res, 200, { ok: true, deleted: 0, message: '未找到该条（可能已被处理或已撤回）' });
+        } else {
+          reply(res, r.status, { ok: false, error: '删除失败 HTTP ' + r.status });
+        }
+      } catch (e) {
+        reply(res, 500, { ok: false, error: '删除异常：' + e.message });
+      }
+    });
+    return;
+  }
+
+  /* 下载完整视频 */
+  if (req.method === 'POST' && req.url === '/download') {
+    readBody(req, res, async parsed => {
       const url = (parsed.url || '').trim();
       if (!url) return reply(res, 400, { ok: false, error: '缺少 url 字段' });
 
-      // 立即返回「已接收」，下载在后台进行（大文件耗时久，避免前端一直等待）
+      // 立即返回「已接收」，下载在后台进行
       reply(res, 200, { ok: true, accepted: true, message: '已开始下载，见终端进度' });
 
       download(url, parsed.title)
@@ -184,49 +305,19 @@ const server = http.createServer((req, res) => {
     return;
   }
 
-  if (req.method === 'POST' && req.url === '/delete') {
-    let body = '';
-    req.on('data', c => { body += c; if (body.length > 1e6) req.destroy(); });
-    req.on('end', async () => {
-      let parsed;
-      try { parsed = JSON.parse(body || '{}'); }
-      catch (_) { return reply(res, 400, { ok: false, error: '请求体不是合法 JSON' }); }
-
-      const id = (parsed.id || '').trim();
-      if (!id) return reply(res, 400, { ok: false, error: '缺少 id 字段' });
-
-      if (!SUPABASE_URL || !SERVICE_KEY) {
-        return reply(res, 500, { ok: false, error: '未配置 Supabase service_role 密钥' });
-      }
-
-      try {
-        const del = await fetch(SUPABASE_URL + '/rest/v1/pending_imports?id=eq.' + encodeURIComponent(id), {
-          method: 'DELETE',
-          headers: {
-            apikey: SERVICE_KEY,
-            Authorization: 'Bearer ' + SERVICE_KEY,
-            'Prefer': 'return=representation',
-            Accept: 'application/json'
-          }
-        });
-        const deleted = await del.json().catch(() => []);
-        const count = Array.isArray(deleted) ? deleted.length : 0;
-        if (del.ok && count > 0) {
-          reply(res, 200, { ok: true, deleted: count, message: '已撤回 ' + id });
-        } else if (del.ok) {
-          reply(res, 200, { ok: true, deleted: 0, message: '未找到该条（可能已被处理或已撤回）' });
-        } else {
-          reply(res, del.status, { ok: false, error: '删除失败 HTTP ' + del.status });
-        }
-      } catch (e) {
-        reply(res, 500, { ok: false, error: '删除异常：' + e.message });
-      }
-    });
-    return;
-  }
-
   reply(res, 404, { ok: false, error: '未知路径' });
 });
+
+function readBody(req, res, cb) {
+  let body = '';
+  req.on('data', c => { body += c; if (body.length > 1e6) req.destroy(); });
+  req.on('end', () => {
+    let parsed;
+    try { parsed = JSON.parse(body || '{}'); }
+    catch (_) { return reply(res, 400, { ok: false, error: '请求体不是合法 JSON' }); }
+    cb(parsed);
+  });
+}
 
 function reply(res, status, obj) {
   res.writeHead(status, { 'Content-Type': 'application/json' });
@@ -235,10 +326,12 @@ function reply(res, status, obj) {
 
 server.listen(PORT, '127.0.0.1', () => {
   console.log('==========================================');
-  console.log('  ball-bridge 本地下载服务已启动');
+  console.log('  ball-bridge 统一后台服务已启动');
   console.log('  监听：http://127.0.0.1:' + PORT);
   console.log('  下载目录：' + VIDEOS_DIR);
   console.log('  健康检查：http://127.0.0.1:' + PORT + '/ping');
+  console.log('  接口：/queue 入队 · /delete 撤回 · /download 下载');
+  console.log('  鉴权：仅接受本机来源');
   console.log('  关闭：Ctrl+C');
   console.log('==========================================');
 });
