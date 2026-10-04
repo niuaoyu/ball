@@ -104,6 +104,11 @@
     align-items:center; justify-content:center; z-index:50; padding:18px;
   }
   .overlay.show{display:flex;}
+  /* 叠加在正文页之上的编辑页/引用选择器，层级更高 */
+  #noteEditOverlay{z-index:52;}
+  #refPickerOverlay{z-index:53;}
+  /* 播放器最上层：从笔记引用点开视频时盖住笔记页，关闭后回到笔记 */
+  #overlay{z-index:55;}
   .modal{
     background:var(--card); border-radius:16px; width:min(900px,100%); max-height:92vh;
     display:flex; flex-direction:column; overflow:hidden;
@@ -170,6 +175,132 @@
   }
   .toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
 
+  /* ===== 顶栏导航 ===== */
+  .top-left{display:flex; align-items:center; gap:16px; flex-wrap:wrap;}
+  .main-nav{display:flex; gap:6px; align-items:center;}
+  .nav-btn{
+    font:inherit; font-size:13.5px; padding:6px 14px; border:1px solid var(--line);
+    border-radius:20px; background:#fff; color:var(--sub); cursor:pointer; white-space:nowrap;
+  }
+  .nav-btn:hover{border-color:var(--brand); color:var(--brand);}
+  .nav-btn.active{background:var(--brand); border-color:var(--brand); color:#fff;}
+  .view.hidden{display:none;}
+  .hidden{display:none;}
+  .notes-head{display:flex; align-items:center; gap:10px; margin-bottom:14px;}
+  .notes-title{font-weight:600; font-size:16px;}
+  .spacer{flex:1;}
+
+  /* ===== 播放浮层底部笔记行 ===== */
+  .note-row{
+    display:flex; align-items:center; gap:8px; padding:9px 16px;
+    border-top:1px solid var(--line); font-size:13px; color:var(--sub); min-height:20px;
+  }
+  .note-row .note-label{flex-shrink:0; font-size:12.5px; color:var(--sub); opacity:.7;}
+  .note-row .note-text{
+    flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--ink);
+  }
+  .note-row .note-text.empty{color:var(--sub); opacity:.7;}
+  .mini-btn{
+    flex-shrink:0; font:inherit; font-size:12.5px; padding:3px 10px; border:1px solid var(--line);
+    border-radius:8px; background:#fff; color:var(--sub); cursor:pointer;
+  }
+  .mini-btn:hover{border-color:var(--brand); color:var(--brand);}
+  .mini-btn.primary{background:var(--brand); border-color:var(--brand); color:#fff;}
+  .note-edit{padding:0 16px 12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:8px;}
+  .note-edit.hidden{display:none;}
+  .note-edit textarea{
+    font:inherit; font-size:13.5px; padding:9px 12px; border:1px solid var(--line);
+    border-radius:10px; background:#faf9f5; outline:none; resize:vertical; min-height:60px; width:100%;
+  }
+  .note-edit textarea:focus{border-color:var(--brand); background:#fff;}
+  .note-edit-actions{display:flex; gap:8px; justify-content:flex-end;}
+
+  /* ===== 主题笔记弹窗（复用 editor 的 field 结构，宽度更宽） ===== */
+  .note-modal{width:min(760px,100%);}
+  /* 正文阅读页 */
+  .note-read{display:flex; flex-direction:column; gap:12px; padding:20px 22px; max-height:62vh; overflow-y:auto;}
+  .note-head-title{overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+  .note-read-tags{display:flex; gap:6px; flex-wrap:wrap;}
+  .note-read-body{
+    font-size:14px; line-height:1.8; color:var(--ink); white-space:pre-wrap; word-break:break-word;
+  }
+  .note-read-body .ref-inline{margin:2px 4px;}
+  .note-read-body .ref-inline .ref-del{display:none;}
+  .mhead-right{display:flex; align-items:center; gap:8px; margin-left:auto;}
+  .edit-entry{
+    font:inherit; font-size:12.5px; padding:3px 10px; border:1px solid var(--line);
+    border-radius:8px; background:#fff; color:var(--sub); cursor:pointer; white-space:nowrap;
+  }
+  .edit-entry:hover{border-color:var(--brand); color:var(--brand);}
+  #noteModal .mhead .close{margin-left:0;}
+  .note-body{
+    min-height:180px; max-height:46vh; overflow-y:auto; padding:12px 14px;
+    border:1px solid var(--line); border-radius:10px; background:#faf9f5; font-size:14.5px; line-height:1.7;
+    outline:none; white-space:pre-wrap;
+  }
+  .note-body:focus{border-color:var(--brand); background:#fff;}
+  .note-body:empty::before{content:attr(data-placeholder); color:#b6b1a6; pointer-events:none;}
+  .note-toolbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap;}
+  .insert-ref-btn{
+    font:inherit; font-size:13px; padding:7px 14px; border:1px solid var(--line);
+    border-radius:8px; background:#f3f1ea; color:var(--ink); cursor:pointer; white-space:nowrap;
+  }
+  .insert-ref-btn:hover{border-color:var(--brand); color:var(--brand); background:#fff;}
+
+  /* 内联引用块 */
+  .ref-inline{
+    display:inline-flex; align-items:center; gap:8px; padding:4px 10px 4px 6px; margin:2px 4px;
+    border:1px solid #f0dfbd; border-radius:10px; background:var(--amber-soft); cursor:pointer;
+    vertical-align:middle; user-select:none;
+  }
+  .ref-inline:hover{border-color:var(--amber);}
+  .ref-inline .ref-thumb{
+    width:44px; height:25px; border-radius:6px; background:#111; overflow:hidden; flex-shrink:0;
+  }
+  .ref-inline .ref-thumb video{width:100%; height:100%; object-fit:cover; display:block;}
+  .ref-inline .ref-thumb .ph{width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#cfcabf; font-size:10px;}
+  .ref-inline .ref-meta{display:flex; flex-direction:column; line-height:1.3;}
+  .ref-inline .ref-meta .ref-title{font-size:12.5px; color:var(--ink); font-weight:600; max-width:160px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .ref-inline .ref-meta .ref-dur{font-size:11px; color:#92600a;}
+  .ref-inline .ref-del{
+    flex-shrink:0; border:none; background:none; color:#b48a3a; cursor:pointer; font-size:14px;
+    padding:0 2px; line-height:1;
+  }
+  .ref-inline .ref-del:hover{color:var(--danger);}
+
+  /* 引用选择器 */
+  .ref-picker{width:min(640px,100%);}
+  .ref-picker-body{display:flex; flex-direction:column; gap:12px; padding:16px;}
+  .ref-picker-body input[type=search]{
+    font:inherit; padding:9px 12px; border:1px solid var(--line); border-radius:10px;
+    background:#faf9f5; outline:none;
+  }
+  .ref-picker-body input[type=search]:focus{border-color:var(--brand); background:#fff;}
+  .ref-tag-label{font-size:12.5px; color:var(--sub);}
+  .ref-clip-list{display:flex; flex-direction:column; gap:8px; max-height:44vh; overflow-y:auto;}
+  .ref-clip-item{
+    display:flex; align-items:center; gap:10px; padding:8px 10px; border:1px solid var(--line);
+    border-radius:10px; cursor:pointer; background:#fff; transition:border-color .1s, background .1s;
+  }
+  .ref-clip-item:hover{border-color:var(--brand);}
+  .ref-clip-item.sel{border-color:var(--brand); background:var(--brand-soft);}
+  .ref-clip-item .ref-thumb{width:56px; height:32px; border-radius:6px; background:#111; overflow:hidden; flex-shrink:0;}
+  .ref-clip-item .ref-thumb video{width:100%; height:100%; object-fit:cover; display:block;}
+  .ref-clip-item .ref-thumb .ph{width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#cfcabf; font-size:10px;}
+  .ref-clip-item .ref-info{flex:1; min-width:0;}
+  .ref-clip-item .ref-info .ref-title{font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .ref-clip-item .ref-info .ref-tags{font-size:11.5px; color:var(--sub); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
+  .ref-clip-item .ref-check{flex-shrink:0; width:20px; height:20px; border:1px solid var(--line); border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:13px; color:#fff;}
+  .ref-clip-item.sel .ref-check{background:var(--brand); border-color:var(--brand);}
+  .ref-clip-empty{padding:30px 10px; text-align:center; color:var(--sub); font-size:13px;}
+
+  /* ===== 笔记卡片（复用 wall 但展示不同） ===== */
+  .note-card .body .note-summary{
+    font-size:12.5px; color:var(--sub); line-height:1.5;
+    display:-webkit-box; -webkit-line-clamp:3; -webkit-box-orient:vertical; overflow:hidden;
+  }
+  .note-card .body .note-foot{margin-top:auto; display:flex; align-items:center; gap:8px; font-size:12px; color:var(--sub);}
+
   @media (max-width:600px){
     .wall{grid-template-columns:1fr 1fr; gap:10px;}
     .wrap{padding:12px 12px 40px;}
@@ -182,21 +313,40 @@
 <body>
 <div class="wrap">
   <header class="top">
-    <h1>篮球案例库</h1>
+    <div class="top-left">
+      <h1>篮球案例库</h1>
+      <nav class="main-nav" id="mainNav">
+        <button class="nav-btn active" id="navClips">案例库</button>
+        <button class="nav-btn" id="navNotes">笔记</button>
+      </nav>
+    </div>
     <span class="meta" id="metaText">正在加载…</span>
   </header>
 
   <div class="err" id="errBox"></div>
 
-  <div class="toolbar">
-    <input type="search" id="search" placeholder="搜索标签、备注、来源（空格分隔 = 同时命中）" autocomplete="off">
-    <div class="toggle" id="editToggle" title="开启后可点卡片右上角编辑">编辑模式</div>
-    <div class="auth-btn" id="authBtn" title="登录后才能编辑或删除案例">登录</div>
+  <!-- ===== 案例库视图 ===== -->
+  <div id="clipsView" class="view">
+    <div class="toolbar">
+      <input type="search" id="search" placeholder="搜索标签、备注、来源（空格分隔 = 同时命中）" autocomplete="off">
+      <div class="toggle" id="editToggle" title="开启后可点卡片右上角编辑">编辑模式</div>
+      <div class="auth-btn" id="authBtn" title="登录后才能编辑或删除案例">登录</div>
+    </div>
+
+    <div class="filters" id="filters"></div>
+
+    <div class="wall" id="wall"></div>
   </div>
 
-  <div class="filters" id="filters"></div>
-
-  <div class="wall" id="wall"></div>
+  <!-- ===== 笔记视图 ===== -->
+  <div id="notesView" class="view hidden">
+    <div class="notes-head">
+      <span class="notes-title">我的笔记</span>
+      <span class="spacer"></span>
+      <button class="auth-btn" id="btnNewNote" title="新建一篇主题笔记">＋ 新建笔记</button>
+    </div>
+    <div class="wall note-wall" id="noteWall"></div>
+  </div>
 </div>
 
 <!-- 播放弹层 -->
@@ -214,8 +364,19 @@
       </div>
       <div class="info">
         <div class="chips" id="pTags"></div>
-        <p class="note" id="pNote"></p>
         <div class="src" id="pSrc"></div>
+      </div>
+      <div class="note-row" id="noteRow">
+        <span class="note-label">笔记</span>
+        <span class="note-text" id="pNote">（无）</span>
+        <button class="mini-btn" id="btnEditNote">编辑</button>
+      </div>
+      <div class="note-edit hidden" id="noteEdit">
+        <textarea id="pNoteInput" rows="3" placeholder="写点思考…"></textarea>
+        <div class="note-edit-actions">
+          <button class="mini-btn" id="btnCancelNote">取消</button>
+          <button class="mini-btn primary" id="btnSaveNote">保存</button>
+        </div>
       </div>
     </div>
     <div class="pbar">
@@ -260,8 +421,8 @@
         <div class="chips" id="eTagChips" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
       </div>
       <div class="field">
-        <label>备注</label>
-        <textarea id="eNote" placeholder="一句话讲清楚这个回合在做什么"></textarea>
+        <label>思考笔记</label>
+        <textarea id="eNote" placeholder="对这个片段的分析、观察、感悟…"></textarea>
       </div>
       <div class="hint">标签就是关键词，空格分隔即可，如：挡拆、反跑、失误漏人、蛋蛋。不需要带维度前缀。</div>
     </div>
@@ -270,6 +431,90 @@
       <span class="spacer" style="flex:1;"></span>
       <button class="cancel" id="btnEditCancel">取消</button>
       <button class="save" id="btnEditSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 主题笔记正文阅读弹窗 -->
+<div class="overlay" id="noteOverlay">
+  <div class="modal note-modal" id="noteModal">
+    <div class="mhead">
+      <span class="t note-head-title" id="noteReadHeadTitle"></span>
+      <div class="mhead-right">
+        <button class="edit-entry" id="btnNoteEdit" title="修改这篇笔记">修改</button>
+        <button class="close" id="btnNoteClose" title="关闭 (Esc)">&times;</button>
+      </div>
+    </div>
+    <div class="mbody">
+      <div class="note-read" id="noteRead">
+        <div class="chips note-read-tags" id="noteReadTags"></div>
+        <div class="note-read-body" id="noteReadBody"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- 主题笔记编辑弹窗（独立页面） -->
+<div class="overlay" id="noteEditOverlay">
+  <div class="modal editor note-modal" id="noteEditModal">
+    <div class="mhead">
+      <span class="t">修改笔记</span>
+      <button class="close" id="btnNoteEditClose" title="关闭 (Esc)">&times;</button>
+    </div>
+    <div class="mbody">
+      <div class="ebody">
+        <div class="field">
+          <label>标题</label>
+          <input id="noteTitleInput" autocomplete="off" placeholder="例如：怎么破设卡人">
+        </div>
+        <div class="field">
+          <label>标签</label>
+          <div class="tagrow" id="noteTagRow">
+            <input id="noteTagInput" autocomplete="off" placeholder="标签（空格分隔），如：设卡人 挡拆">
+            <button id="btnNoteAddTag" type="button">加标签</button>
+          </div>
+          <div class="chips" id="noteTagChips" style="display:flex;gap:5px;flex-wrap:wrap;"></div>
+        </div>
+        <div class="field">
+          <label>正文</label>
+          <div class="note-body" id="noteBody" contenteditable="true" data-placeholder="开始写正文…"></div>
+        </div>
+        <div class="field">
+          <div class="note-toolbar">
+            <button class="insert-ref-btn" id="btnInsertRef" title="在光标处插入一个片段引用">＋ 插入引用</button>
+            <span class="hint">点「插入引用」把案例库片段嵌进正文，阅读时点引用直接播放</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="efoot">
+      <button class="danger" id="btnNoteDelete">删除笔记</button>
+      <span class="spacer" style="flex:1;"></span>
+      <button class="cancel" id="btnNoteEditCancel">取消</button>
+      <button class="save" id="btnNoteSave">保存</button>
+    </div>
+  </div>
+</div>
+
+<!-- 引用选择器（按标签多选片段） -->
+<div class="overlay" id="refPickerOverlay">
+  <div class="modal ref-picker" id="refPickerModal">
+    <div class="mhead">
+      <span class="t">选择要引用的片段</span>
+      <button class="close" id="btnRefPickerClose">&times;</button>
+    </div>
+    <div class="mbody">
+      <div class="ref-picker-body">
+        <input type="search" id="refSearch" placeholder="搜索标题、备注…" autocomplete="off">
+        <div class="ref-tag-label">按标签筛选（可多选）：</div>
+        <div class="filters" id="refTagFilter"></div>
+        <div class="ref-clip-list" id="refClipList"></div>
+      </div>
+    </div>
+    <div class="efoot">
+      <span class="hint" id="refCount" style="margin-right:auto;"></span>
+      <button class="cancel" id="btnRefPickerCancel">取消</button>
+      <button class="save" id="btnConfirmRef">插入到正文</button>
     </div>
   </div>
 </div>
@@ -319,17 +564,30 @@ const state = {
   editTarget: null,  // 正在编辑的片段
   editTags: [],      // 编辑中的标签数组
   rate: 1,           // 播放速率
-  session: null      // 登录会话（Supabase Auth session）
+  session: null,     // 登录会话（Supabase Auth session）
+  view: 'clips',     // 'clips' | 'notes'
+  notes: [],         // 全部主题笔记
+  noteTarget: null,  // 正在编辑的笔记
+  noteTags: [],      // 编辑中的笔记标签
+  noteDirty: false,  // 笔记是否被修改（用于关闭提醒）
+  refCursor: null,   // 插入引用时的光标位置
+  refSelected: new Set(), // 引用选择器里勾选的片段 id
+  refActiveTags: new Set(), // 引用选择器里选中的筛选标签
 };
 
 /* ---------- DOM ---------- */
 const $ = id => document.getElementById(id);
 const el = {
   meta: $('metaText'), err: $('errBox'),
+  navClips: $('navClips'), navNotes: $('navNotes'),
+  clipsView: $('clipsView'), notesView: $('notesView'),
   search: $('search'), editToggle: $('editToggle'), authBtn: $('authBtn'), filters: $('filters'), wall: $('wall'),
+  noteWall: $('noteWall'), btnNewNote: $('btnNewNote'),
   overlay: $('overlay'), playerBox: $('playerBox'), pTitle: $('pTitle'), pVideo: $('pVideo'), pLoading: $('pLoading'),
   playState: $('playState'),
   pTags: $('pTags'), pNote: $('pNote'), pSrc: $('pSrc'),
+  noteRow: $('noteRow'), noteEdit: $('noteEdit'), pNoteInput: $('pNoteInput'),
+  btnEditNote: $('btnEditNote'), btnCancelNote: $('btnCancelNote'), btnSaveNote: $('btnSaveNote'),
   pPrev: $('pPrev'), pNext: $('pNext'), pPlay: $('pPlay'), pLoop: $('pLoop'), pEdit: $('pEdit'), pTime: $('pTime'),
   pPrevFrame: $('pPrevFrame'), pBack1s: $('pBack1s'), pFwd1s: $('pFwd1s'), pNextFrame: $('pNextFrame'),
   speedGroup: $('speedGroup'),
@@ -338,6 +596,17 @@ const el = {
   btnAddTag: $('btnAddTag'), eTagChips: $('eTagChips'), eNote: $('eNote'),
   btnEditClose: $('btnEditClose'), btnEditCancel: $('btnEditCancel'), btnEditSave: $('btnEditSave'),
   btnEditDelete: $('btnEditDelete'),
+  noteOverlay: $('noteOverlay'), noteTitleInput: $('noteTitleInput'), noteTagChips: $('noteTagChips'),
+  noteTagInput: $('noteTagInput'), btnNoteAddTag: $('btnNoteAddTag'), noteBody: $('noteBody'), btnInsertRef: $('btnInsertRef'),
+  btnNoteClose: $('btnNoteClose'), btnNoteEdit: $('btnNoteEdit'),
+  noteRead: $('noteRead'), noteReadHeadTitle: $('noteReadHeadTitle'),
+  noteReadTags: $('noteReadTags'), noteReadBody: $('noteReadBody'),
+  noteEditOverlay: $('noteEditOverlay'), noteEditModal: $('noteEditModal'),
+  btnNoteEditClose: $('btnNoteEditClose'), btnNoteEditCancel: $('btnNoteEditCancel'),
+  btnNoteSave: $('btnNoteSave'), btnNoteDelete: $('btnNoteDelete'),
+  refPickerOverlay: $('refPickerOverlay'), refSearch: $('refSearch'), refTagFilter: $('refTagFilter'),
+  refClipList: $('refClipList'), refCount: $('refCount'), btnRefPickerClose: $('btnRefPickerClose'),
+  btnRefPickerCancel: $('btnRefPickerCancel'), btnConfirmRef: $('btnConfirmRef'),
   loginOverlay: $('loginOverlay'), loginEmail: $('loginEmail'), loginPass: $('loginPass'),
   loginHint: $('loginHint'), btnLoginClose: $('btnLoginClose'), btnLoginCancel: $('btnLoginCancel'), btnLoginSubmit: $('btnLoginSubmit'),
   toast: $('toast')
@@ -363,7 +632,7 @@ function showError(msg) {
 function clearError() { el.err.classList.remove('show'); }
 
 function clipText(c) {
-  const parts = [c.title, c.note];
+  const parts = [c.title, c.note, c.memo];
   (c.tags || []).forEach(t => parts.push(t.dimension, t.value));
   const s = c.source || {};
   parts.push(s.matchTitle, s.fileName);
@@ -384,6 +653,47 @@ function authHeaders() {
     h.Authorization = 'Bearer ' + state.session.access_token;
   }
   return h;
+}
+
+/* 用 refresh_token 换新 access_token（Supabase access_token 默认 1h 过期） */
+async function refreshToken() {
+  const s = state.session;
+  if (!s || !s.refresh_token) return false;
+  try {
+    const res = await fetch(SUPA_URL + '/auth/v1/token?grant_type=refresh_token', {
+      method: 'POST',
+      headers: { apikey: SUPA_KEY, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh_token: s.refresh_token })
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) return false;
+    s.access_token = data.access_token;
+    if (data.refresh_token) s.refresh_token = data.refresh_token;
+    if (data.user) s.user = data.user;
+    localStorage.setItem(AUTH_KEY, JSON.stringify(s));
+    refreshAuthUI();
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+/* 带认证的请求：遇 401 自动刷新 token 重试一次，再失败则清除登录态并返回 */
+async function authFetch(url, options) {
+  let res = await fetch(url, options);
+  if (res.status === 401 && await refreshToken()) {
+    // 用新 token 重建请求头重试
+    const opts = { ...options };
+    opts.headers = { ...(options.headers || {}), Authorization: 'Bearer ' + state.session.access_token };
+    res = await fetch(url, opts);
+  }
+  if (res.status === 401) {
+    // 刷新也失败，清除过期登录态
+    state.session = null;
+    localStorage.removeItem(AUTH_KEY);
+    refreshAuthUI();
+  }
+  return res;
 }
 /* 更新登录态 UI */
 function refreshAuthUI() {
@@ -433,7 +743,7 @@ function logout() {
   state.editing = false;
   el.editToggle.classList.remove('on');
   refreshAuthUI();
-  renderWall();
+  if (state.view === 'notes') renderNoteWall(); else renderWall();
   toast('已退出登录');
 }
 function openLogin() {
@@ -466,6 +776,37 @@ async function loadClips() {
   const data = await res.json();
   if (!Array.isArray(data)) throw new Error('返回数据格式异常');
   return data;
+}
+
+async function loadNotes() {
+  try {
+    const res = await fetch(SUPA_URL + '/rest/v1/notes?order=created_at.desc', {
+      headers: { apikey: SUPA_KEY, Accept: 'application/json' }
+    });
+    if (!res.ok) {
+      // notes 表不存在时静默降级（不阻塞案例库使用）
+      if (res.status === 404 || res.status === 400) return [];
+      throw new Error('笔记加载失败：HTTP ' + res.status);
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  } catch (e) {
+    console.warn('笔记加载失败（不影响案例库）:', e.message);
+    return [];
+  }
+}
+
+/* 从正文 HTML 提取纯文本摘要 */
+function noteSummary(n) {
+  const div = document.createElement('div');
+  div.innerHTML = n.body || '';
+  return div.textContent.replace(/\s+/g, ' ').trim().slice(0, 80);
+}
+/* 从正文 HTML 统计引用片段数量 */
+function noteRefCount(n) {
+  const div = document.createElement('div');
+  div.innerHTML = n.body || '';
+  return div.querySelectorAll('.ref-inline').length;
 }
 
 /* ---------- 标签统计（生成筛选胶囊） ---------- */
@@ -571,10 +912,10 @@ function renderWall() {
     });
     body.appendChild(chips);
 
-    if (c.note && c.note !== c.title) {
+    if (c.memo) {
       const note = document.createElement('div');
       note.className = 'note';
-      note.textContent = c.note;
+      note.textContent = c.memo;
       body.appendChild(note);
     }
 
@@ -611,13 +952,55 @@ function openPlayer(c) {
     chip.textContent = (t.dimension ? t.dimension + ':' : '') + t.value;
     el.pTags.appendChild(chip);
   });
-  el.pNote.textContent = c.note && c.note !== c.title ? c.note : '';
+  renderPlayerNote();
   const s = c.source || {};
   el.pSrc.textContent = s.matchTitle ? ('来源：' + s.matchTitle + (s.start != null ? ' · ' + fmtTime(s.start) : '')) : '';
   el.pEdit.style.display = isLoggedIn() ? '' : 'none';
   setRate(1);
   setPlayIcon(false);
   loadVideo();
+}
+
+/* 播放浮层底部一行笔记（存 memo 字段，与油猴「备注=标题」分开） */
+function renderPlayerNote() {
+  const c = state.current;
+  const note = (c && c.memo) ? c.memo : '';
+  if (note) {
+    el.pNote.textContent = note;
+    el.pNote.classList.remove('empty');
+  } else {
+    el.pNote.textContent = '（暂无笔记）';
+    el.pNote.classList.add('empty');
+  }
+  el.noteEdit.classList.add('hidden');
+  el.noteRow.classList.remove('hidden');
+  // 未登录时隐藏编辑按钮
+  el.btnEditNote.style.display = isLoggedIn() ? '' : 'none';
+}
+function toggleNoteEdit(show) {
+  el.noteEdit.classList.toggle('hidden', !show);
+  el.noteRow.classList.toggle('hidden', show);
+  if (show) {
+    const c = state.current;
+    el.pNoteInput.value = (c && c.memo) ? c.memo : '';
+    el.pNoteInput.focus();
+  }
+}
+async function savePlayerNote() {
+  const c = state.current;
+  if (!c) return;
+  if (!isLoggedIn()) { toast('请先登录'); openLogin(); return; }
+  const memo = el.pNoteInput.value.trim();
+  const res = await authFetch(SUPA_URL + '/rest/v1/clips?id=eq.' + encodeURIComponent(c.id), {
+    method: 'PATCH',
+    headers: { ...authHeaders(), Prefer: 'return=minimal' },
+    body: JSON.stringify({ memo })
+  });
+  if (!res.ok) { toast(res.status === 401 ? '登录已过期，请重新登录' : '保存失败：HTTP ' + res.status); if (res.status === 401) openLogin(); return; }
+  c.memo = memo;
+  renderPlayerNote();
+  renderWall();
+  toast('笔记已保存');
 }
 function loadVideo() {
   const c = state.current;
@@ -681,7 +1064,7 @@ function openEditor(c) {
   state.editTarget = c;
   state.editTags = (c.tags || []).map(t => ({ dimension: t.dimension || '', value: t.value || '' }));
   el.eTitle.value = c.title || '';
-  el.eNote.value = c.note || '';
+  el.eNote.value = c.memo || '';
   renderEditTags();
   el.editOverlay.classList.add('show');
   el.eTagInput.focus();
@@ -726,15 +1109,15 @@ async function saveEdit() {
   if (!c) return;
   if (!isLoggedIn()) { toast('请先登录'); openLogin(); return; }
   const title = el.eTitle.value.trim();
-  const note = el.eNote.value.trim();
+  const memo = el.eNote.value.trim();
   const tags = state.editTags.filter(t => t.value);
-  const res = await fetch(SUPA_URL + '/rest/v1/clips?id=eq.' + encodeURIComponent(c.id), {
+  const res = await authFetch(SUPA_URL + '/rest/v1/clips?id=eq.' + encodeURIComponent(c.id), {
     method: 'PATCH',
     headers: { ...authHeaders(), Prefer: 'return=minimal' },
-    body: JSON.stringify({ title, note, tags })
+    body: JSON.stringify({ title, memo, tags })
   });
-  if (!res.ok) { toast('保存失败：HTTP ' + res.status + (res.status === 401 ? '（登录已过期，请重新登录）' : '')); return; }
-  Object.assign(c, { title, note, tags });
+  if (!res.ok) { toast(res.status === 401 ? '登录已过期，请重新登录' : '保存失败：HTTP ' + res.status); if (res.status === 401) openLogin(); return; }
+  Object.assign(c, { title, memo, tags });
   closeEditor();
   renderWall();
   if (state.current && state.current.id === c.id) openPlayer(c);
@@ -746,16 +1129,436 @@ async function deleteClip() {
   if (!c) return;
   if (!isLoggedIn()) { toast('请先登录'); openLogin(); return; }
   if (!confirm('确定删除案例「' + (c.title || c.folder || '未命名') + '」？\n\n这会从在线库移除该记录（R2 上的视频文件会保留，可后续统一清理）。')) return;
-  const res = await fetch(SUPA_URL + '/rest/v1/clips?id=eq.' + encodeURIComponent(c.id), {
+  const res = await authFetch(SUPA_URL + '/rest/v1/clips?id=eq.' + encodeURIComponent(c.id), {
     method: 'DELETE',
     headers: { ...authHeaders(), Prefer: 'return=minimal' }
   });
-  if (!res.ok) { toast('删除失败：HTTP ' + res.status + (res.status === 401 ? '（登录已过期，请重新登录）' : '')); return; }
+  if (!res.ok) { toast(res.status === 401 ? '登录已过期，请重新登录' : '删除失败：HTTP ' + res.status); if (res.status === 401) openLogin(); return; }
   state.clips = state.clips.filter(x => x.id !== c.id);
   closeEditor();
   closePlayer();
   applyFilters();
   toast('已删除');
+}
+
+/* ================================================================
+   主题笔记系统
+   ================================================================ */
+
+/* 视图切换 */
+function setView(v) {
+  state.view = v;
+  el.navClips.classList.toggle('active', v === 'clips');
+  el.navNotes.classList.toggle('active', v === 'notes');
+  el.clipsView.classList.toggle('hidden', v !== 'clips');
+  el.notesView.classList.toggle('hidden', v !== 'notes');
+  if (v === 'clips') { renderWall(); }
+  else { renderNoteWall(); }
+}
+
+/* 渲染笔记卡片墙 */
+function renderNoteWall() {
+  el.noteWall.innerHTML = '';
+  if (!state.notes.length) {
+    const d = document.createElement('div');
+    d.className = 'empty';
+    d.textContent = '还没有笔记，点「＋ 新建笔记」开始记录你的思考';
+    el.noteWall.appendChild(d);
+    return;
+  }
+  state.notes.forEach(n => {
+    const card = document.createElement('div');
+    card.className = 'card note-card';
+
+    const body = document.createElement('div');
+    body.className = 'body';
+
+    const name = document.createElement('div');
+    name.className = 'name';
+    name.textContent = n.title || '未命名笔记';
+    body.appendChild(name);
+
+    if (n.tags && n.tags.length) {
+      const chips = document.createElement('div');
+      chips.className = 'chips';
+      n.tags.forEach(t => {
+        const chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = t;
+        chips.appendChild(chip);
+      });
+      body.appendChild(chips);
+    }
+
+    const summary = document.createElement('div');
+    summary.className = 'note-summary';
+    const s = noteSummary(n);
+    summary.textContent = s || '（无正文）';
+    body.appendChild(summary);
+
+    const foot = document.createElement('div');
+    foot.className = 'note-foot';
+    foot.textContent = noteRefCount(n) + ' 个引用';
+    body.appendChild(foot);
+
+    card.appendChild(body);
+    card.addEventListener('click', () => openNote(n));
+    el.noteWall.appendChild(card);
+  });
+}
+
+/* 打开单篇笔记正文（阅读页） */
+function openNote(n) {
+  state.noteTarget = n;
+  state.noteTags = (n.tags || []).slice();
+  state.noteDirty = false;
+  el.noteOverlay.classList.add('show');
+  renderNoteRead();
+}
+
+/* 新建笔记：直接进编辑页 */
+function newNote() {
+  state.noteTarget = null;
+  state.noteTags = [];
+  state.noteDirty = false;
+  el.noteTitleInput.value = '';
+  el.noteBody.innerHTML = '';
+  renderNoteTagChips();
+  el.noteEditOverlay.classList.add('show');
+  el.noteTitleInput.focus();
+}
+
+/* 渲染正文阅读页（弹窗头=标题，正文区=标签+内容，引用可点击） */
+function renderNoteRead() {
+  const n = state.noteTarget;
+  el.noteReadHeadTitle.textContent = n.title || '未命名笔记';
+  el.noteReadTags.innerHTML = '';
+  (n.tags || []).forEach(t => {
+    const chip = document.createElement('span');
+    chip.className = 'chip dim';
+    chip.textContent = t;
+    el.noteReadTags.appendChild(chip);
+  });
+  el.noteReadBody.innerHTML = n.body || '';
+  // 给正文里的引用块重新绑定点击播放
+  el.noteReadBody.querySelectorAll('.ref-inline').forEach(span => {
+    const c = state.clips.find(x => x.id === span.dataset.clipId);
+    if (c) span.addEventListener('click', () => openPlayer(c));
+  });
+}
+
+/* 点「修改」：打开编辑页，回填已有内容 */
+function enterEditMode() {
+  const n = state.noteTarget;
+  el.noteTitleInput.value = (n && n.title) || '';
+  el.noteBody.innerHTML = (n && n.body) || '';
+  state.noteTags = (n && n.tags || []).slice();
+  renderNoteTagChips();
+  state.noteDirty = false;
+  el.noteEditOverlay.classList.add('show');
+}
+
+/* 关闭编辑页（不保存，回到正文页） */
+function closeNoteEdit() {
+  el.noteEditOverlay.classList.remove('show');
+}
+
+/* 取消编辑：关闭编辑页回到正文页（新笔记无正文页，直接关编辑页） */
+function cancelNoteEdit() {
+  closeNoteEdit();
+}
+
+/* 关闭正文阅读页 */
+function closeNote() {
+  el.noteOverlay.classList.remove('show');
+  state.noteTarget = null;
+}
+
+/* 笔记标签 chips */
+function renderNoteTagChips() {
+  el.noteTagChips.innerHTML = '';
+  state.noteTags.forEach((t, i) => {
+    const chip = document.createElement('span');
+    chip.className = 'chip dim';
+    chip.style.cssText = 'font-size:12px;padding:2px 8px;cursor:pointer;';
+    chip.textContent = t + ' ✕';
+    chip.title = '点击删除';
+    chip.addEventListener('click', () => { state.noteTags.splice(i, 1); renderNoteTagChips(); state.noteDirty = true; });
+    el.noteTagChips.appendChild(chip);
+  });
+}
+function addNoteTag() {
+  const raw = el.noteTagInput.value.trim();
+  if (!raw) return;
+  raw.split(/\s+/).forEach(v => {
+    if (v && !state.noteTags.includes(v)) state.noteTags.push(v);
+  });
+  el.noteTagInput.value = '';
+  renderNoteTagChips();
+  state.noteDirty = true;
+}
+
+/* 保存笔记 */
+async function saveNote() {
+  if (!isLoggedIn()) { toast('请先登录'); openLogin(); return; }
+  const title = el.noteTitleInput.value.trim();
+  const body = el.noteBody.innerHTML;
+  if (!title && !body.replace(/<[^>]*>/g, '').trim()) { toast('标题和正文不能都为空'); return; }
+  const payload = { title, body, tags: state.noteTags };
+  let res;
+  if (state.noteTarget && state.noteTarget.id) {
+    res = await authFetch(SUPA_URL + '/rest/v1/notes?id=eq.' + encodeURIComponent(state.noteTarget.id), {
+      method: 'PATCH',
+      headers: { ...authHeaders(), Prefer: 'return=representation' },
+      body: JSON.stringify(payload)
+    });
+  } else {
+    res = await authFetch(SUPA_URL + '/rest/v1/notes', {
+      method: 'POST',
+      headers: { ...authHeaders(), Prefer: 'return=representation' },
+      body: JSON.stringify(payload)
+    });
+  }
+  if (!res.ok) {
+    const msg = res.status === 404 ? 'notes 表不存在，请先在 Supabase 执行建表 SQL'
+      : res.status === 401 ? '登录已过期，请重新登录'
+      : '保存失败：HTTP ' + res.status;
+    toast(msg);
+    if (res.status === 401) openLogin();
+    return;
+  }
+  const saved = await res.json();
+  const obj = Array.isArray(saved) ? saved[0] : saved;
+  if (state.noteTarget && state.noteTarget.id) {
+    Object.assign(state.noteTarget, obj);
+  } else {
+    state.notes.unshift(obj);
+    state.noteTarget = obj; // 新建后记住
+  }
+  state.noteDirty = false;
+  state.noteTags = (obj.tags || []).slice();
+  // 关闭编辑页，回到正文阅读页（如果正文页还开着则刷新它）
+  closeNoteEdit();
+  if (el.noteOverlay.classList.contains('show')) {
+    renderNoteRead();
+  }
+  renderNoteWall();
+  toast('笔记已保存');
+}
+
+async function deleteNote() {
+  const n = state.noteTarget;
+  if (!n || !n.id) { toast('这条笔记还没保存'); return; }
+  if (!isLoggedIn()) { toast('请先登录'); openLogin(); return; }
+  if (!confirm('确定删除笔记「' + (n.title || '未命名笔记') + '」？')) return;
+  const res = await authFetch(SUPA_URL + '/rest/v1/notes?id=eq.' + encodeURIComponent(n.id), {
+    method: 'DELETE',
+    headers: { ...authHeaders(), Prefer: 'return=minimal' }
+  });
+  if (!res.ok) { toast(res.status === 401 ? '登录已过期，请重新登录' : '删除失败：HTTP ' + res.status); if (res.status === 401) openLogin(); return; }
+  state.notes = state.notes.filter(x => x.id !== n.id);
+  state.noteDirty = false;
+  closeNoteEdit();
+  closeNote();
+  renderNoteWall();
+  toast('已删除');
+}
+
+/* ---------- 内联引用 ---------- */
+
+/* 生成一个内联引用块（可点击播放） */
+function buildRefInline(clipId) {
+  const c = state.clips.find(x => x.id === clipId);
+  if (!c) return null;
+  const span = document.createElement('span');
+  span.className = 'ref-inline';
+  span.setAttribute('contenteditable', 'false');
+  span.dataset.clipId = clipId;
+
+  const thumb = document.createElement('span');
+  thumb.className = 'ref-thumb';
+  const v = document.createElement('video');
+  v.muted = true; v.playsInline = true; v.preload = 'metadata';
+  v.src = c.video_url;
+  v.addEventListener('loadeddata', () => { /* 首帧 */ });
+  v.addEventListener('error', () => { v.remove(); const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = '▶'; thumb.appendChild(ph); });
+  thumb.appendChild(v);
+  span.appendChild(thumb);
+
+  const meta = document.createElement('span');
+  meta.className = 'ref-meta';
+  const title = document.createElement('span');
+  title.className = 'ref-title';
+  title.textContent = c.title || '未命名';
+  meta.appendChild(title);
+  const dur = document.createElement('span');
+  dur.className = 'ref-dur';
+  dur.textContent = (c.duration ? c.duration.toFixed(1) : '?') + 's';
+  meta.appendChild(dur);
+  span.appendChild(meta);
+
+  const del = document.createElement('button');
+  del.className = 'ref-del';
+  del.textContent = '×';
+  del.title = '移除引用';
+  del.addEventListener('click', e => { e.stopPropagation(); span.remove(); state.noteDirty = true; });
+  span.appendChild(del);
+
+  span.addEventListener('click', () => openPlayer(c));
+  return span;
+}
+
+/* 引用选择器 */
+function openRefPicker() {
+  // 记录当前光标位置（Range）
+  const sel = window.getSelection();
+  state.refCursor = null;
+  if (sel.rangeCount && el.noteBody.contains(sel.anchorNode)) {
+    state.refCursor = sel.getRangeAt(0).cloneRange();
+  }
+  state.refSelected.clear();
+  state.refActiveTags.clear();
+  el.refSearch.value = '';
+  renderRefTagFilter();
+  renderRefList();
+  el.refPickerOverlay.classList.add('show');
+  el.refSearch.focus();
+}
+
+function closeRefPicker() {
+  el.refPickerOverlay.classList.remove('show');
+  state.refCursor = null;
+  state.refSelected.clear();
+}
+
+/* 引用选择器里的标签筛选胶囊 */
+function renderRefTagFilter() {
+  const count = {};
+  state.clips.forEach(c => (c.tags || []).forEach(t => { if (t && t.value) count[t.value] = (count[t.value] || 0) + 1; }));
+  el.refTagFilter.innerHTML = '';
+  const all = document.createElement('span');
+  all.className = 'pill' + (state.refActiveTags.size === 0 ? ' on' : '');
+  all.textContent = '全部';
+  all.addEventListener('click', () => { state.refActiveTags.clear(); renderRefTagFilter(); renderRefList(); });
+  el.refTagFilter.appendChild(all);
+  Object.keys(count).sort((a, b) => count[b] - count[a]).forEach(v => {
+    const p = document.createElement('span');
+    p.className = 'pill' + (state.refActiveTags.has(v) ? ' on' : '');
+    p.textContent = v + ' ' + count[v];
+    p.addEventListener('click', () => {
+      if (state.refActiveTags.has(v)) state.refActiveTags.delete(v); else state.refActiveTags.add(v);
+      renderRefTagFilter(); renderRefList();
+    });
+    el.refTagFilter.appendChild(p);
+  });
+}
+
+function refPickerMatches(c) {
+  if (state.refActiveTags.size) {
+    const vals = new Set((c.tags || []).map(t => t.value));
+    for (const v of state.refActiveTags) if (!vals.has(v)) return false;
+  }
+  const q = el.refSearch.value.trim().toLowerCase();
+  if (q) {
+    const text = clipText(c).toLowerCase();
+    if (!text.includes(q)) return false;
+  }
+  return true;
+}
+
+function renderRefList() {
+  el.refClipList.innerHTML = '';
+  const list = state.clips.filter(refPickerMatches);
+  if (!list.length) {
+    const d = document.createElement('div');
+    d.className = 'ref-clip-empty';
+    d.textContent = '没有匹配的片段';
+    el.refClipList.appendChild(d);
+  } else {
+    list.forEach(c => {
+      const item = document.createElement('div');
+      item.className = 'ref-clip-item' + (state.refSelected.has(c.id) ? ' sel' : '');
+
+      const thumb = document.createElement('span');
+      thumb.className = 'ref-thumb';
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.preload = 'metadata';
+      v.src = c.video_url;
+      v.addEventListener('error', () => { v.remove(); const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = '▶'; thumb.appendChild(ph); });
+      thumb.appendChild(v);
+      item.appendChild(thumb);
+
+      const info = document.createElement('span');
+      info.className = 'ref-info';
+      const t = document.createElement('div');
+      t.className = 'ref-title';
+      t.textContent = c.title || '未命名';
+      info.appendChild(t);
+      const tags = document.createElement('div');
+      tags.className = 'ref-tags';
+      tags.textContent = (c.tags || []).map(x => x.value).join(' · ');
+      info.appendChild(tags);
+      item.appendChild(info);
+
+      const check = document.createElement('span');
+      check.className = 'ref-check';
+      check.textContent = '✓';
+      item.appendChild(check);
+
+      item.addEventListener('click', () => {
+        if (state.refSelected.has(c.id)) state.refSelected.delete(c.id); else state.refSelected.add(c.id);
+        item.classList.toggle('sel', state.refSelected.has(c.id));
+        el.refCount.textContent = '已选 ' + state.refSelected.size + ' 条';
+      });
+      el.refClipList.appendChild(item);
+    });
+  }
+  el.refCount.textContent = '已选 ' + state.refSelected.size + ' 条';
+}
+
+/* 确认插入引用到正文光标处 */
+function confirmInsertRef() {
+  if (!state.refSelected.size) { toast('请先勾选要引用的片段'); return; }
+  const ids = Array.from(state.refSelected);
+  // 插入前先记住最后一个节点（insertNode 后 fragment 会被清空，不能再用 frag.lastChild）
+  const frag = document.createDocumentFragment();
+  ids.forEach(id => {
+    const node = buildRefInline(id);
+    if (node) {
+      frag.appendChild(node);
+      frag.appendChild(document.createTextNode(' '));
+    }
+  });
+  if (!frag.childNodes.length) { closeRefPicker(); return; }
+  const last = frag.lastChild;
+  let inserted = 0;
+  try {
+    el.noteBody.focus();
+    const sel = window.getSelection();
+    let range;
+    if (state.refCursor && el.noteBody.contains(state.refCursor.startContainer)) {
+      range = state.refCursor.cloneRange();
+    } else {
+      range = document.createRange();
+      range.selectNodeContents(el.noteBody);
+      range.collapse(false); // 光标放到正文末尾
+    }
+    range.deleteContents();
+    range.insertNode(frag);
+    inserted = ids.length;
+    // 把光标移到插入内容之后（用插入前记住的最后一个节点定位）
+    if (last) {
+      range.setStartAfter(last);
+      range.collapse(true);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    state.noteDirty = true;
+  } finally {
+    // 无论插入过程是否出错，都关闭弹窗，避免「没关 + 重复点击重复插入」
+    closeRefPicker();
+  }
+  if (inserted) toast('已插入 ' + inserted + ' 个引用');
 }
 
 /* ---------- 事件绑定 ---------- */
@@ -798,14 +1601,43 @@ el.eTagInput.addEventListener('keydown', e => {
 el.btnEditSave.addEventListener('click', saveEdit);
 el.btnEditDelete.addEventListener('click', deleteClip);
 
+/* 播放浮层底部笔记 */
+el.btnEditNote.addEventListener('click', () => toggleNoteEdit(true));
+el.btnCancelNote.addEventListener('click', () => toggleNoteEdit(false));
+el.btnSaveNote.addEventListener('click', savePlayerNote);
+
+/* 视图切换 */
+el.navClips.addEventListener('click', () => setView('clips'));
+el.navNotes.addEventListener('click', () => setView('notes'));
+
+/* 主题笔记 */
+el.btnNewNote.addEventListener('click', newNote);
+el.btnNoteClose.addEventListener('click', closeNote);
+el.btnNoteEdit.addEventListener('click', enterEditMode);
+el.btnNoteEditClose.addEventListener('click', closeNoteEdit);
+el.btnNoteEditCancel.addEventListener('click', cancelNoteEdit);
+el.btnNoteSave.addEventListener('click', saveNote);
+el.btnNoteDelete.addEventListener('click', deleteNote);
+el.noteOverlay.addEventListener('click', e => { if (e.target === el.noteOverlay) closeNote(); });
+el.noteEditOverlay.addEventListener('click', e => { if (e.target === el.noteEditOverlay) cancelNoteEdit(); });
+el.btnNoteAddTag.addEventListener('click', addNoteTag);
+el.noteTagInput.addEventListener('keydown', e => {
+  if (e.key === 'Enter') { e.preventDefault(); addNoteTag(); }
+});
+el.noteBody.addEventListener('input', () => { state.noteDirty = true; });
+
+/* 引用 */
+el.btnInsertRef.addEventListener('click', openRefPicker);
+el.btnRefPickerClose.addEventListener('click', closeRefPicker);
+el.btnRefPickerCancel.addEventListener('click', closeRefPicker);
+el.btnConfirmRef.addEventListener('click', confirmInsertRef);
+el.refPickerOverlay.addEventListener('click', e => { if (e.target === el.refPickerOverlay) closeRefPicker(); });
+el.refSearch.addEventListener('input', renderRefList);
+
 window.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
-  if (el.editOverlay.classList.contains('show')) {
-    if (e.key === 'Escape') closeEditor();
-    return;
-  }
   if (el.overlay.classList.contains('show')) {
     switch (e.key) {
       case 'Escape': closePlayer(); break;
@@ -825,6 +1657,23 @@ window.addEventListener('keydown', e => {
         setRate(state.rate < 1 ? state.rate * 2 : 1);
         break;
     }
+    return;
+  }
+  if (el.refPickerOverlay.classList.contains('show')) {
+    if (e.key === 'Escape') closeRefPicker();
+    return;
+  }
+  if (el.noteEditOverlay.classList.contains('show')) {
+    if (e.key === 'Escape') cancelNoteEdit();
+    return;
+  }
+  if (el.noteOverlay.classList.contains('show')) {
+    if (e.key === 'Escape') closeNote();
+    return;
+  }
+  if (el.editOverlay.classList.contains('show')) {
+    if (e.key === 'Escape') closeEditor();
+    return;
   }
 });
 
@@ -854,6 +1703,8 @@ function tickTime() {
     el.meta.textContent = '加载失败';
     showError('案例库加载失败：' + err.message);
   }
+  // 笔记独立加载，失败不影响案例库
+  state.notes = await loadNotes();
   requestAnimationFrame(tickTime);
 })();
 </script>

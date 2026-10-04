@@ -114,6 +114,7 @@ function toRow(clip) {
     video_url: CFG.publicBase + '/clips/' + enc(clip.folder) + '/' + enc(clip.videoFile),
     tags: clip.tags || [],
     note: clip.note || '',
+    memo: clip.memo || '',   // 思考笔记（网页端播放浮层写入，与油猴「备注=标题」分开）
     duration: clip.duration || 0,
     source: src,
     created_at: ts(clip.createdAt),
@@ -136,6 +137,7 @@ function sameMeta(row, clip) {
   const rowSrc = row.source || {};
   return row.title === (clip.note || src.matchTitle || clip.folder || '')
     && (row.note || '') === (clip.note || '')
+    && (row.memo || '') === (clip.memo || '')
     && Math.abs((row.duration || 0) - (clip.duration || 0)) < 0.001
     && Math.abs((rowSrc.start || 0) - (src.start || 0)) < 0.001
     && Math.abs((rowSrc.end || 0) - (src.end || 0)) < 0.001
