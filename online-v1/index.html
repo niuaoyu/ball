@@ -41,12 +41,12 @@
     background:#fff; user-select:none;
   }
   .toolbar .toggle.on{color:var(--brand); border-color:var(--brand); background:var(--brand-soft);}
-  .toolbar .auth-btn{
+  .toolbar .auth-btn,.notes-head .auth-btn{
     font-size:13px; color:var(--sub); padding:8px 14px; border:1px solid var(--line);
     border-radius:10px; cursor:pointer; background:#fff; user-select:none; white-space:nowrap;
   }
-  .toolbar .auth-btn:hover{border-color:var(--brand); color:var(--brand);}
-  .toolbar .auth-btn.logged{color:var(--brand); border-color:var(--brand); background:var(--brand-soft);}
+  .toolbar .auth-btn:hover,.notes-head .auth-btn:hover{border-color:var(--brand); color:var(--brand);}
+  .toolbar .auth-btn.logged,.notes-head .auth-btn.logged{color:var(--brand); border-color:var(--brand); background:var(--brand-soft);}
   .editor .field input[type=password],.editor .field input[type=email]{
     padding:9px 12px; border:1px solid var(--line); border-radius:10px; background:#faf9f5; font:inherit; outline:none;
   }
@@ -75,6 +75,7 @@
   .card:active{transform:scale(.99);}
   .thumb{position:relative; aspect-ratio:16/9; background:#111; overflow:hidden;}
   .thumb video{width:100%; height:100%; object-fit:cover; display:block;}
+  .thumb img{width:100%; height:100%; object-fit:cover; display:block;}
   .thumb .ph{position:absolute; inset:0; display:flex; align-items:center; justify-content:center; color:#cfcabf; font-size:12px;}
   .thumb .dur{
     position:absolute; right:8px; bottom:8px; background:rgba(0,0,0,.65); color:#fff;
@@ -109,6 +110,8 @@
   #refPickerOverlay{z-index:53;}
   /* 播放器最上层：从笔记引用点开视频时盖住笔记页，关闭后回到笔记 */
   #overlay{z-index:55;}
+  /* 片段编辑弹层盖住播放器：播放浮层里点「编辑」直接在最前面编辑，编辑完返回视频 */
+  #editOverlay{z-index:56;}
   .modal{
     background:var(--card); border-radius:16px; width:min(900px,100%); max-height:92vh;
     display:flex; flex-direction:column; overflow:hidden;
@@ -130,7 +133,13 @@
   .modal .info .chips{display:flex; gap:5px; flex-wrap:wrap; margin:6px 0;}
   .modal .info .note{color:var(--sub); font-size:13.5px; margin:4px 0 0; white-space:pre-wrap;}
   .modal .info .src{color:var(--sub); font-size:12.5px; margin-top:6px;}
-  .modal .pbar{display:flex; align-items:center; gap:10px; padding:10px 16px; border-top:1px solid var(--line); flex-wrap:wrap;}
+  .modal .pbar{display:flex; align-items:stretch; gap:16px; padding:12px 16px; border-top:1px solid var(--line);}
+  .modal .pbar-main{display:flex; flex-direction:column; gap:8px; flex:1; min-width:0;}
+  .modal .pbar-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap;}
+  .modal .pbar-note{
+    width:min(300px,36%); flex-shrink:0; display:flex; flex-direction:column;
+    border-left:1px solid var(--line); padding-left:16px;
+  }
   .modal .pbar button{font:inherit; font-size:13px; color:var(--ink); background:#f3f1ea;
     border:1px solid var(--line); border-radius:8px; padding:7px 12px; cursor:pointer;}
   .modal .pbar button:hover{background:#ebe8df;}
@@ -144,6 +153,10 @@
   .modal .pbar .speed-group .speed.active{background:var(--brand); border-color:var(--brand); color:#fff;}
   .modal .pbar .spacer{flex:1;}
   .modal .pbar .time{margin-left:8px; color:var(--sub); font-size:12.5px; font-variant-numeric:tabular-nums;}
+  /* 笔记区里的按钮恢复小尺寸，不被 .pbar button 放大 */
+  .modal .pbar-note .mini-btn{font-size:12.5px; padding:3px 10px; background:#fff; color:var(--sub);}
+  .modal .pbar-note .mini-btn:hover{background:#fff; color:var(--brand);}
+  .modal .pbar-note .mini-btn.primary{background:var(--brand); color:#fff;}
 
   /* 编辑弹层 */
   .editor{width:min(560px,100%);}
@@ -162,12 +175,14 @@
     border-radius:8px; background:#f3f1ea; cursor:pointer;}
   .editor .tagrow button:hover{background:#ebe8df;}
   .editor .hint{font-size:12px; color:var(--sub);}
-  .editor .efoot{display:flex; gap:10px; justify-content:flex-end; padding:12px 16px; border-top:1px solid var(--line);}
-  .editor .efoot button{font:inherit; font-size:13px; padding:8px 16px; border-radius:9px; cursor:pointer;}
-  .editor .efoot .cancel{background:#fff; border:1px solid var(--line); color:var(--ink);}
-  .editor .efoot .save{background:var(--brand); border:1px solid var(--brand); color:#fff;}
-  .editor .efoot .danger{background:#fff; border:1px solid #f0c5c0; color:var(--danger);}
-
+  .modal .efoot{display:flex; gap:10px; justify-content:flex-end; padding:12px 16px; border-top:1px solid var(--line);}
+  .modal .efoot button{font:inherit; font-size:13px; padding:8px 16px; border-radius:9px; cursor:pointer; border:1px solid var(--line);}
+  .modal .efoot .cancel{background:#fff; border-color:var(--line); color:var(--ink);}
+  .modal .efoot .cancel:hover{border-color:var(--brand); color:var(--brand);}
+  .modal .efoot .save{background:var(--brand); border-color:var(--brand); color:#fff;}
+  .modal .efoot .save:hover{background:#0c5f57;}
+  .modal .efoot .danger{background:#fff; border-color:#f0c5c0; color:var(--danger);}
+  .modal .hint{font-size:12px; color:var(--sub);}
   .toast{
     position:fixed; left:50%; bottom:26px; transform:translateX(-50%) translateY(20px);
     background:#22201c; color:#fff; padding:9px 18px; border-radius:10px; font-size:13.5px;
@@ -190,14 +205,15 @@
   .notes-title{font-weight:600; font-size:16px;}
   .spacer{flex:1;}
 
-  /* ===== 播放浮层底部笔记行 ===== */
+  /* ===== 播放浮层笔记区（pbar 右侧） ===== */
   .note-row{
-    display:flex; align-items:center; gap:8px; padding:9px 16px;
-    border-top:1px solid var(--line); font-size:13px; color:var(--sub); min-height:20px;
+    display:flex; align-items:flex-start; gap:8px; padding:2px 0;
+    font-size:13px; color:var(--sub); min-height:20px; flex:1;
   }
-  .note-row .note-label{flex-shrink:0; font-size:12.5px; color:var(--sub); opacity:.7;}
+  .note-row .note-label{flex-shrink:0; font-size:12.5px; color:var(--sub); opacity:.7; line-height:1.5;}
   .note-row .note-text{
-    flex:1; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:var(--ink);
+    flex:1; color:var(--ink); white-space:pre-wrap; word-break:break-word;
+    max-height:72px; overflow-y:auto; line-height:1.5;
   }
   .note-row .note-text.empty{color:var(--sub); opacity:.7;}
   .mini-btn{
@@ -206,11 +222,11 @@
   }
   .mini-btn:hover{border-color:var(--brand); color:var(--brand);}
   .mini-btn.primary{background:var(--brand); border-color:var(--brand); color:#fff;}
-  .note-edit{padding:0 16px 12px; border-top:1px solid var(--line); display:flex; flex-direction:column; gap:8px;}
+  .note-edit{display:flex; flex-direction:column; gap:8px; flex:1;}
   .note-edit.hidden{display:none;}
   .note-edit textarea{
     font:inherit; font-size:13.5px; padding:9px 12px; border:1px solid var(--line);
-    border-radius:10px; background:#faf9f5; outline:none; resize:vertical; min-height:60px; width:100%;
+    border-radius:10px; background:#faf9f5; outline:none; resize:vertical; min-height:60px; width:100%; flex:1;
   }
   .note-edit textarea:focus{border-color:var(--brand); background:#fff;}
   .note-edit-actions{display:flex; gap:8px; justify-content:flex-end;}
@@ -258,6 +274,7 @@
     width:44px; height:25px; border-radius:6px; background:#111; overflow:hidden; flex-shrink:0;
   }
   .ref-inline .ref-thumb video{width:100%; height:100%; object-fit:cover; display:block;}
+  .ref-inline .ref-thumb img{width:100%; height:100%; object-fit:cover; display:block;}
   .ref-inline .ref-thumb .ph{width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#cfcabf; font-size:10px;}
   .ref-inline .ref-meta{display:flex; flex-direction:column; line-height:1.3;}
   .ref-inline .ref-meta .ref-title{font-size:12.5px; color:var(--ink); font-weight:600; max-width:160px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
@@ -286,6 +303,7 @@
   .ref-clip-item.sel{border-color:var(--brand); background:var(--brand-soft);}
   .ref-clip-item .ref-thumb{width:56px; height:32px; border-radius:6px; background:#111; overflow:hidden; flex-shrink:0;}
   .ref-clip-item .ref-thumb video{width:100%; height:100%; object-fit:cover; display:block;}
+  .ref-clip-item .ref-thumb img{width:100%; height:100%; object-fit:cover; display:block;}
   .ref-clip-item .ref-thumb .ph{width:100%; height:100%; display:flex; align-items:center; justify-content:center; color:#cfcabf; font-size:10px;}
   .ref-clip-item .ref-info{flex:1; min-width:0;}
   .ref-clip-item .ref-info .ref-title{font-size:13.5px; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;}
@@ -366,36 +384,43 @@
         <div class="chips" id="pTags"></div>
         <div class="src" id="pSrc"></div>
       </div>
-      <div class="note-row" id="noteRow">
-        <span class="note-label">笔记</span>
-        <span class="note-text" id="pNote">（无）</span>
-        <button class="mini-btn" id="btnEditNote">编辑</button>
-      </div>
-      <div class="note-edit hidden" id="noteEdit">
-        <textarea id="pNoteInput" rows="3" placeholder="写点思考…"></textarea>
-        <div class="note-edit-actions">
-          <button class="mini-btn" id="btnCancelNote">取消</button>
-          <button class="mini-btn primary" id="btnSaveNote">保存</button>
-        </div>
-      </div>
     </div>
     <div class="pbar">
-      <button id="pPrevFrame" title="后退 0.5 秒（←）">← −0.5s</button>
-      <button id="pBack1s" title="后退 1 秒（Shift+←）">−1s</button>
-      <button id="pPlay" class="primary" title="播放/暂停 (Space)">播放 <kbd>Space</kbd></button>
-      <button id="pFwd1s" title="前进 1 秒（Shift+→）">+1s</button>
-      <button id="pNextFrame" title="前进 0.5 秒（→）">+0.5s →</button>
-      <button id="pLoop" class="on" title="循环片段">循环片段</button>
-      <span class="speed-group" id="speedGroup">
-        <button class="speed" data-rate="0.25">0.25x</button>
-        <button class="speed" data-rate="0.5">0.5x</button>
-        <button class="speed active" data-rate="1">1x</button>
-      </span>
-      <span class="spacer"></span>
-      <button id="pPrev" title="上一个 (,)">上一案例</button>
-      <button id="pNext" title="下一个 (.)">下一案例</button>
-      <button id="pEdit" title="编辑这个片段">编辑</button>
-      <span class="time" id="pTime">00:00 / 00:00</span>
+      <div class="pbar-main">
+        <div class="pbar-row">
+          <button id="pLoop" class="on" title="循环片段">循环片段</button>
+          <span class="speed-group" id="speedGroup">
+            <button class="speed" data-rate="0.25">0.25x</button>
+            <button class="speed" data-rate="0.5">0.5x</button>
+            <button class="speed active" data-rate="1">1x</button>
+          </span>
+          <button id="pPrev" title="上一个 (,)">上一案例</button>
+          <button id="pNext" title="下一个 (.)">下一案例</button>
+          <button id="pEdit" title="编辑这个片段">编辑</button>
+        </div>
+        <div class="pbar-row">
+          <button id="pPrevFrame" title="后退 0.5 秒（←）">← −0.5s</button>
+          <button id="pBack1s" title="后退 1 秒（Shift+←）">−1s</button>
+          <button id="pPlay" class="primary" title="播放/暂停 (Space)">播放 <kbd>Space</kbd></button>
+          <button id="pFwd1s" title="前进 1 秒（Shift+→）">+1s</button>
+          <button id="pNextFrame" title="前进 0.5 秒（→）">+0.5s →</button>
+          <span class="time" id="pTime">00:00 / 00:00</span>
+        </div>
+      </div>
+      <div class="pbar-note">
+        <div class="note-row" id="noteRow">
+          <span class="note-label">笔记</span>
+          <span class="note-text" id="pNote">（无）</span>
+          <button class="mini-btn" id="btnEditNote">编辑</button>
+        </div>
+        <div class="note-edit hidden" id="noteEdit">
+          <textarea id="pNoteInput" rows="3" placeholder="写点思考…"></textarea>
+          <div class="note-edit-actions">
+            <button class="mini-btn" id="btnCancelNote">取消</button>
+            <button class="mini-btn primary" id="btnSaveNote">保存</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -874,20 +899,45 @@ function renderWall() {
     const thumb = document.createElement('div');
     thumb.className = 'thumb';
     const ph = document.createElement('div');
-    ph.className = 'ph'; ph.textContent = '加载缩略图…';
-    const v = document.createElement('video');
-    v.muted = true; v.playsInline = true; v.preload = 'metadata';
-    v.src = c.video_url;
-    /* 不用 canvas 导出图片：R2 未开跨域时 canvas 会被污染、toDataURL 直接抛异常。
-       直接让 video 元素渲染第一帧当封面（需要真实触发一次 seek 才会解码出画面） */
-    v.addEventListener('loadedmetadata', () => { try { v.currentTime = 0.001; } catch (_) {} });
-    v.addEventListener('seeked', () => { if (ph.parentNode) ph.remove(); });
-    v.addEventListener('loadeddata', () => { if (ph.parentNode) ph.remove(); });
-    v.addEventListener('error', () => {
-      v.remove();
-      ph.textContent = '缩略图加载失败';
-    });
-    thumb.appendChild(v);
+    ph.className = 'ph'; ph.textContent = '▶';
+    if (c.thumbnail_url) {
+      /* 有缩略图：<img> 秒开（几十 KB JPG） */
+      const img = document.createElement('img');
+      img.alt = c.title || '';
+      img.referrerPolicy = 'no-referrer';
+      img.addEventListener('error', () => { img.remove(); ph.textContent = '▶'; });
+      img.addEventListener('load', () => { if (ph.parentNode) ph.remove(); });
+      thumb.appendChild(img);
+      if (window.IntersectionObserver) {
+        const io = new IntersectionObserver(entries => {
+          entries.forEach(en => {
+            if (en.isIntersecting) { img.src = c.thumbnail_url; io.disconnect(); }
+          });
+        }, { rootMargin: '200px' });
+        io.observe(img);
+      } else {
+        img.src = c.thumbnail_url;
+      }
+    } else {
+      /* 无缩略图（历史老片段）：回退 <video> 拉首帧当封面，带懒加载避免并发 */
+      const v = document.createElement('video');
+      v.muted = true; v.playsInline = true; v.preload = 'metadata';
+      v.addEventListener('loadedmetadata', () => { try { v.currentTime = 0.001; } catch (_) {} });
+      v.addEventListener('seeked', () => { if (ph.parentNode) ph.remove(); });
+      v.addEventListener('loadeddata', () => { if (ph.parentNode) ph.remove(); });
+      v.addEventListener('error', () => { v.remove(); ph.textContent = '▶'; });
+      thumb.appendChild(v);
+      if (window.IntersectionObserver) {
+        const io = new IntersectionObserver(entries => {
+          entries.forEach(en => {
+            if (en.isIntersecting) { v.src = c.video_url; io.disconnect(); }
+          });
+        }, { rootMargin: '200px' });
+        io.observe(v);
+      } else {
+        v.src = c.video_url;
+      }
+    }
     thumb.appendChild(ph);
     const dur = document.createElement('span');
     dur.className = 'dur';
@@ -1377,12 +1427,19 @@ function buildRefInline(clipId) {
 
   const thumb = document.createElement('span');
   thumb.className = 'ref-thumb';
-  const v = document.createElement('video');
-  v.muted = true; v.playsInline = true; v.preload = 'metadata';
-  v.src = c.video_url;
-  v.addEventListener('loadeddata', () => { /* 首帧 */ });
-  v.addEventListener('error', () => { v.remove(); const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = '▶'; thumb.appendChild(ph); });
-  thumb.appendChild(v);
+  if (c.thumbnail_url) {
+    const img = document.createElement('img');
+    img.src = c.thumbnail_url;
+    img.alt = '';
+    img.addEventListener('error', () => { img.remove(); const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = '▶'; thumb.appendChild(ph); });
+    thumb.appendChild(img);
+  } else {
+    const v = document.createElement('video');
+    v.muted = true; v.playsInline = true; v.preload = 'metadata';
+    v.src = c.video_url;
+    v.addEventListener('error', () => { v.remove(); const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = '▶'; thumb.appendChild(ph); });
+    thumb.appendChild(v);
+  }
   span.appendChild(thumb);
 
   const meta = document.createElement('span');
@@ -1481,11 +1538,19 @@ function renderRefList() {
 
       const thumb = document.createElement('span');
       thumb.className = 'ref-thumb';
-      const v = document.createElement('video');
-      v.muted = true; v.playsInline = true; v.preload = 'metadata';
-      v.src = c.video_url;
-      v.addEventListener('error', () => { v.remove(); const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = '▶'; thumb.appendChild(ph); });
-      thumb.appendChild(v);
+      if (c.thumbnail_url) {
+        const img = document.createElement('img');
+        img.src = c.thumbnail_url;
+        img.alt = '';
+        img.addEventListener('error', () => { img.remove(); const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = '▶'; thumb.appendChild(ph); });
+        thumb.appendChild(img);
+      } else {
+        const v = document.createElement('video');
+        v.muted = true; v.playsInline = true; v.preload = 'metadata';
+        v.src = c.video_url;
+        v.addEventListener('error', () => { v.remove(); const ph = document.createElement('span'); ph.className = 'ph'; ph.textContent = '▶'; thumb.appendChild(ph); });
+        thumb.appendChild(v);
+      }
       item.appendChild(thumb);
 
       const info = document.createElement('span');
@@ -1638,6 +1703,10 @@ window.addEventListener('keydown', e => {
   if (e.ctrlKey || e.metaKey || e.altKey) return;
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA')) return;
+  if (el.editOverlay.classList.contains('show')) {
+    if (e.key === 'Escape') closeEditor();
+    return;
+  }
   if (el.overlay.classList.contains('show')) {
     switch (e.key) {
       case 'Escape': closePlayer(); break;
@@ -1669,10 +1738,6 @@ window.addEventListener('keydown', e => {
   }
   if (el.noteOverlay.classList.contains('show')) {
     if (e.key === 'Escape') closeNote();
-    return;
-  }
-  if (el.editOverlay.classList.contains('show')) {
-    if (e.key === 'Escape') closeEditor();
     return;
   }
 });
