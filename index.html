@@ -51,66 +51,44 @@
 </section>
 
 <main data-page-node-id="odgckeQMsRwo0ZkDCERVhB">
-  <div class="player-wrap" data-page-node-id="M5J6GGZFPVLAo8XD45uOcU">
-    <video id="video" preload="metadata" playsinline data-page-node-id="poSffsnsjSbfGQPgs7IPF8"></video>
+  <div class="player-wrap" id="playerWrap" data-page-node-id="M5J6GGZFPVLAo8XD45uOcU">
+    <video id="video" controls preload="metadata" playsinline data-page-node-id="poSffsnsjSbfGQPgs7IPF8"></video>
     <div id="videoPlaceholder" class="placeholder" data-page-node-id="Q192cLCUB8kNrZe983dHxr">
       <p data-page-node-id="h65BpkJQRMACEVn7U5cqHc">还没有关联视频</p>
       <p class="hint" data-page-node-id="GzzYiTS0uXc3BWI0IbLaUN">从上方选择一场比赛，或点击「导入比赛」</p>
     </div>
-  </div>
 
-  <div class="time-row" data-page-node-id="vXXZFRTiYYfE4HGjyLeBTR">
-    <span id="timeNow" class="time" data-page-node-id="w9Y16l23TiGFCqrVJ4ZFP8">00:00.000</span>
-    <div id="timeline" class="timeline" title="点击跳转" data-page-node-id="ZxhB55Y4OoihatOCXf26LV">
-      <div id="abRange" class="ab-range" data-page-node-id="7RaKf24tTpx0Juhc9bpomm"></div>
-      <div id="playhead" class="playhead" data-page-node-id="o0tKZOmE9CuoaQc7GA74Vl"></div>
-    </div>
-    <span id="timeTotal" class="time" data-page-node-id="8fjjnN2PZBc13Vffx3y4cE">00:00.000</span>
-  </div>
-
-  <div class="mark-row" data-page-node-id="Bx9Rt3jKLEFucuQJG5Um2Z">
-    <button id="btnSetA" data-page-node-id="ERpDSF7KPmnyCc9JsIbO71">设为开始 <kbd data-page-node-id="0Sgd5cyBN9Gl0ZE06zhs4F">I</kbd></button>
-    <span id="labelA" class="ab-label" data-page-node-id="9PYVvhb341L88DOCXAbQKk">--:--.---</span>
-    <button id="btnSetB" data-page-node-id="DVEGV9dVomOy02nWN5am6h">设为结束 <kbd data-page-node-id="LzvAoAPwh7WBmmM3D5AKAW">O</kbd></button>
-    <span id="labelB" class="ab-label" data-page-node-id="lOHHe1E5DT6cXmgJH3vLa">--:--.---</span>
-    <button id="btnClearAB" data-page-node-id="9KggPK3ZaGcrVsg1GsdVQY">清除 <kbd data-page-node-id="wnCEiqc4pzbvhIrA06FPrJ">Esc</kbd></button>
-    <span class="spacer" data-page-node-id="rDCTjPfOzx2TZTpFve5xaX"></span>
-    <button id="btnQueue" class="queue" title="把当前 A/B 片段写入远端队列，回电脑跑 node import.js --queue 下载裁剪 + node sync.js 上线">入队上传 <kbd>Q</kbd></button>
-    <button id="btnUndoQueue" class="queue" title="撤回刚入队的那一条">撤回入队</button>
-    <button id="btnSave" class="primary" data-page-node-id="n8P9L7uQaqgXMUhnWcaEXv">保存片段 <kbd data-page-node-id="CaPIkTkS3yOaRTIsu4GANMOr">Enter</kbd></button>
-  </div>
-
-  <div class="transport-row" data-page-node-id="ftDBTMJRRHd0cDD69oeO1f">
-    <button id="btnPrevFrame" title="后退约一帧（←）" data-page-node-id="FTFdW2LPIu1dVg6SkC6eF">← 退一帧</button>
-    <button id="btnBack1s" title="后退 1 秒（Shift+←）">−1s</button>
-    <button id="btnPlay" class="primary" data-page-node-id="YrT4wTKUQqW9FBJ5pL2ZuH">播放 <kbd data-page-node-id="agzkLhFwM47hLxgYbDb2wF">Space</kbd></button>
-    <button id="btnFwd1s" title="前进 1 秒（Shift+→）">+1s</button>
-    <button id="btnNextFrame" title="前进约一帧（→）" data-page-node-id="19JxB4FCfjEHRHKmgCjWd">进一帧 →</button>
-    <button id="btnLoop" class="toggle on" title="Shift+L" data-page-node-id="A7ImR0HLKGrmz5ajtBBC3O">循环片段</button>
-    <div class="speed-group" data-page-node-id="593ZqaDnl2IoBomMvnF6pK">
-      <button class="speed" data-rate="0.25" data-page-node-id="psSWPxqxxx1T2S7OCCfNQ6">0.25x</button>
-      <button class="speed" data-rate="0.5" data-page-node-id="MkSd9tjFetOzkCo7Z1pJne">0.5x</button>
-      <button class="speed active" data-rate="1" data-page-node-id="uYPpkckLTASJKg40AMXQM6">1x</button>
-    </div>
-    <span class="spacer" data-page-node-id="a01bPBj57SCdHNKhLCHxF5"></span>
-    <button id="btnPrevClip" data-page-node-id="yN5uAcGCDIs2YZtxjthBsD">上一案例 <kbd data-page-node-id="JGWPyEogcorevbrE9KvxS">,</kbd></button>
-    <button id="btnNextClip" data-page-node-id="1AN7VN1nL4rdwbf7CZhIi">下一案例 <kbd data-page-node-id="obyQAMrAgcHI1phxVj1en3">.</kbd></button>
-  </div>
-
-  <section class="tag-editor" data-page-node-id="5IKyFfZGLKg710Nu50ehqc">
-    <div class="tag-input-row" data-page-node-id="jzF4v5a6omGWLkAmEay01Z">
-      <label for="tagInput" data-page-node-id="zu4EMEqkA0n5XZCl24xfPi">标签</label>
-      <select id="dimSelect" title="新标签所属维度" data-page-node-id="g1BE3w2ReFypUHg9EVGxnj"></select>
+    <div class="marker-panel" id="markerPanel">
+      <div class="mp-head">
+        <span class="mp-title">片段标记</span>
+        <span class="spacer"></span>
+        <button id="btnFullscreen" class="mp-mini" title="全屏播放（F）">全屏</button>
+        <button id="btnPanelToggle" class="mp-mini" title="收起/展开面板">收起</button>
+      </div>
+      <div class="mp-body" id="mpBody">
+      <div class="mp-row">
+        <button id="btnBack5s" title="后退 5 秒">−5s</button>
+        <button id="btnSetA">设开始 <kbd>I</kbd></button>
+        <button id="btnSetB">设结束 <kbd>O</kbd></button>
+        <button id="btnFwd5s" title="前进 5 秒">+5s</button>
+        <button id="btnLoop" class="toggle on" title="循环播放 A/B 片段（Shift+L）">预览循环 <kbd>P</kbd></button>
+      </div>
+      <div class="mp-row">
+        <button id="btnSave" class="primary">保存片段 <kbd>Enter</kbd></button>
+        <button id="btnQueue" class="queue" title="把当前 A/B 片段写入远端队列，回电脑跑 node import.js --queue 下载裁剪 + node sync.js 上线">入队上传 <kbd>Q</kbd></button>
+        <button id="btnUndoQueue" class="queue" title="撤回刚入队的那一条">撤回入队</button>
+        <button id="btnClearAB">清除 <kbd>Esc</kbd></button>
+      </div>
+      <div class="mp-time">A <span id="labelA" class="ab-label">--:--.---</span> &nbsp; B <span id="labelB" class="ab-label">--:--.---</span> &nbsp; 当前 <span id="timeNow" class="time">00:00.000</span></div>
       <input id="tagInput" list="tagValueList" autocomplete="off"
-             placeholder="输入标签值，空格分隔多个；Enter 添加，空输入再按 Enter 保存片段" data-page-node-id="S9nlmuyqRP6QUQDhktm53d">
-      <datalist id="tagValueList" data-page-node-id="D2zx7pehykjEJfr8D26Or"></datalist>
+             placeholder="标签（空格分隔），如：挡拆 反跑 失误漏人 蛋蛋">
+      <datalist id="tagValueList"></datalist>
+      <div id="draftTags" class="chips"></div>
+      <input id="noteInput" autocomplete="off" placeholder="备注（可选）">
+      <div id="editingHint" class="hint editing-hint"></div>
+      </div>
     </div>
-    <div id="draftTags" class="chips" data-page-node-id="2UXIiAxFWnt9bZjywFp0sI"></div>
-    <div class="meta-row" data-page-node-id="1VH4E5IubK6fzBQDqkg1yK">
-      <input id="noteInput" autocomplete="off" placeholder="备注：一句话，例如「Green 提前夹击，弱侧协防慢半拍」" data-page-node-id="6a3EZjWzRdLhhz6W0c19UK">
-    </div>
-    <div id="editingHint" class="hint editing-hint" data-page-node-id="eyMqzbfoaxX7aVe4AfxL1Y"></div>
-  </section>
+  </div>
 
   <section class="results-section" data-page-node-id="43Qqem4nvV675gZDwQn386">
     <div class="results-head" data-page-node-id="KsCVp0Y0xgcXf2GPv7kwJ">

@@ -13,10 +13,8 @@
 /* ---------- 常量 ---------- */
 const FRAME = 1 / 30;                 // 「约一帧」的步长，可按视频实际帧率改
 const DB_NAME = 'tactic-lab';
-const DB_VERSION = 2;
+const DB_VERSION = 3;
 const DRAFT_KEY = 'tactic-lab:draft';
-const RATES = [0.25, 0.5, 1];
-const DEFAULT_DIMS = ['战术', '掩护人', '持球人结果', '掩护人结果', '防守', '进攻区域', '球队', '球员'];
 
 /* ---------- 本地 bridge 服务（入队/撤回/下载统一入口） ---------- */
 const BRIDGE = 'http://127.0.0.1:8321';
@@ -72,10 +70,6 @@ const els = {
   hotTags: $('hotTags'),
   placeholder: $('videoPlaceholder'),
   timeNow: $('timeNow'),
-  timeTotal: $('timeTotal'),
-  timeline: $('timeline'),
-  abRange: $('abRange'),
-  playhead: $('playhead'),
   btnSetA: $('btnSetA'),
   btnSetB: $('btnSetB'),
   labelA: $('labelA'),
@@ -84,16 +78,9 @@ const els = {
   btnSave: $('btnSave'),
   btnQueue: $('btnQueue'),
   btnUndoQueue: $('btnUndoQueue'),
-  btnPrevFrame: $('btnPrevFrame'),
-  btnBack1s: $('btnBack1s'),
-  btnPlay: $('btnPlay'),
-  btnFwd1s: $('btnFwd1s'),
-  btnNextFrame: $('btnNextFrame'),
+  btnBack5s: $('btnBack5s'),
+  btnFwd5s: $('btnFwd5s'),
   btnLoop: $('btnLoop'),
-  speedBtns: Array.from(document.querySelectorAll('.speed')),
-  btnPrevClip: $('btnPrevClip'),
-  btnNextClip: $('btnNextClip'),
-  dimSelect: $('dimSelect'),
   tagInput: $('tagInput'),
   tagValueList: $('tagValueList'),
   draftTags: $('draftTags'),
@@ -102,7 +89,11 @@ const els = {
   resultsTitle: $('resultsTitle'),
   results: $('results'),
   videoFileInput: $('videoFileInput'),
-  toast: $('toast')
+  toast: $('toast'),
+  playerWrap: $('playerWrap'),
+  markerPanel: $('markerPanel'),
+  btnFullscreen: $('btnFullscreen'),
+  btnPanelToggle: $('btnPanelToggle')
 };
 
 /* ---------- 小工具 ---------- */
@@ -465,14 +456,6 @@ function renderAB() {
   els.labelB.textContent = state.B != null ? fmt(state.B) : '--:--.---';
   els.labelA.classList.toggle('set', state.A != null);
   els.labelB.classList.toggle('set', state.B != null);
-  const dur = video.duration || 0;
-  if (state.A != null && state.B != null && dur > 0) {
-    els.abRange.style.display = 'block';
-    els.abRange.style.left = (state.A / dur * 100) + '%';
-    els.abRange.style.width = ((state.B - state.A) / dur * 100) + '%';
-  } else {
-    els.abRange.style.display = 'none';
-  }
 }
 
 /* =========================================================
@@ -494,7 +477,6 @@ function step(dt) {
 function setRate(r) {
   state.rate = r;
   video.playbackRate = r;
-  els.speedBtns.forEach(b => b.classList.toggle('active', parseFloat(b.dataset.rate) === r));
 }
 
 function toggleLoop() {
@@ -504,51 +486,35 @@ function toggleLoop() {
   saveDraft();
 }
 
+/* 全屏：对播放器容器（含标记面板）全屏，面板是其后代所以全屏中仍然可见可点 */
+function toggleFullscreen() {
+  if (document.fullscreenElement) {
+    document.exitFullscreen().catch(() => {});
+  } else if (els.playerWrap && els.playerWrap.requestFullscreen) {
+    els.playerWrap.requestFullscreen().catch(() => toast('浏览器拒绝了全屏请求'));
+  }
+}
+
+function togglePanel() {
+  const collapsed = els.markerPanel.classList.toggle('collapsed');
+  els.btnPanelToggle.textContent = collapsed ? '展开' : '收起';
+}
+
 /* A-B 循环 + 时间显示：requestAnimationFrame 判定 */
-let lastPaused = null;
 function rafTick() {
   if (state.loop && state.A != null && state.B != null && !video.paused && !video.seeking) {
     if (video.currentTime >= state.B) video.currentTime = state.A;
   }
   els.timeNow.textContent = fmt(video.currentTime);
-  const dur = video.duration || 0;
-  if (dur > 0) els.playhead.style.left = (video.currentTime / dur * 100) + '%';
-  if (lastPaused !== video.paused) {
-    lastPaused = video.paused;
-    els.btnPlay.innerHTML = (video.paused ? '播放' : '暂停') + ' <kbd>Space</kbd>';
-  }
   requestAnimationFrame(rafTick);
 }
 
 /* =========================================================
  * 标签编辑
  * ========================================================= */
-function allDimensions() {
-  const set = new Set(DEFAULT_DIMS);
-  state.clips.forEach(c => (c.tags || []).forEach(t => set.add(t.dimension)));
-  return Array.from(set);
-}
-
-function renderDimSelect() {
-  const cur = els.dimSelect.value;
-  els.dimSelect.innerHTML = '';
-  allDimensions().forEach(d => {
-    const op = document.createElement('option');
-    op.value = d; op.textContent = d;
-    els.dimSelect.appendChild(op);
-  });
-  const custom = document.createElement('option');
-  custom.value = '__new__'; custom.textContent = '+ 新维度…';
-  els.dimSelect.appendChild(custom);
-  if (cur && allDimensions().includes(cur)) els.dimSelect.value = cur;
-}
-
 function renderTagValueList() {
-  const dim = els.dimSelect.value;
   const set = new Set();
-  state.clips.forEach(c => (c.tags || []).forEach(t => {
-    if (!dim || dim === '__new__' || t.dimension === dim) set.add(t.value);
-  }));
+  state.clips.forEach(c => (c.tags || []).forEach(t => set.add(t.value)));
   els.tagValueList.innerHTML = '';
   Array.from(set).sort().forEach(v => {
     const op = document.createElement('option');
@@ -559,9 +525,8 @@ function renderTagValueList() {
 function addTagsFromInput() {
   const raw = els.tagInput.value.trim();
   if (!raw) return false;
-  const dim = els.dimSelect.value === '__new__' ? '战术' : els.dimSelect.value;
   raw.split(/[\s,，、]+/).filter(Boolean).forEach(word => {
-    let d = dim, v = word;
+    let d = '战术', v = word;
     const m = word.match(/^([^:：]+)[:：](.+)$/);
     if (m) { d = m[1].trim(); v = m[2].trim(); }
     if (v && !state.draftTags.some(t => t.dimension === d && t.value === v)) {
@@ -1099,33 +1064,19 @@ function bindEvents() {
   els.btnSave.addEventListener('click', saveClip);
   els.btnQueue.addEventListener('click', queueClip);
   els.btnUndoQueue.addEventListener('click', undoQueue);
-
-  els.btnPlay.addEventListener('click', togglePlay);
-  els.btnPrevFrame.addEventListener('click', () => step(-FRAME));
-  els.btnNextFrame.addEventListener('click', () => step(FRAME));
-  els.btnBack1s.addEventListener('click', () => step(-1));
-  els.btnFwd1s.addEventListener('click', () => step(1));
-  video.addEventListener('click', togglePlay);
+  els.btnBack5s.addEventListener('click', () => step(-5));
+  els.btnFwd5s.addEventListener('click', () => step(5));
 
   document.addEventListener('click', e => {
     const btn = e.target.closest('button');
     if (btn) btn.blur();
   }, true);
   els.btnLoop.addEventListener('click', toggleLoop);
-  els.speedBtns.forEach(b =>
-    b.addEventListener('click', () => setRate(parseFloat(b.dataset.rate))));
-  els.btnPrevClip.addEventListener('click', () => navClip(-1));
-  els.btnNextClip.addEventListener('click', () => navClip(1));
 
-  els.timeline.addEventListener('pointerdown', e => {
-    if (!video.duration) return;
-    const rect = els.timeline.getBoundingClientRect();
-    const ratio = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
-    video.currentTime = ratio * video.duration;
-  });
+  els.btnFullscreen.addEventListener('click', toggleFullscreen);
+  els.btnPanelToggle.addEventListener('click', togglePanel);
 
   video.addEventListener('loadedmetadata', async () => {
-    els.timeTotal.textContent = fmt(video.duration);
     const m = matchById(state.currentMatchId);
     if (m && !m.duration && video.duration) {
       m.duration = video.duration;
@@ -1135,18 +1086,6 @@ function bindEvents() {
   });
   video.addEventListener('error', () => {
     if (state.currentFile) setStatus('视频加载失败，请重新选择文件', 'warn');
-  });
-
-  els.dimSelect.addEventListener('change', () => {
-    if (els.dimSelect.value === '__new__') {
-      const name = prompt('新维度名称（例如：防守强度）');
-      if (name && name.trim()) {
-        DEFAULT_DIMS.push(name.trim());
-        renderDimSelect();
-        els.dimSelect.value = name.trim();
-      } else renderDimSelect();
-    }
-    renderTagValueList();
   });
 
   els.tagInput.addEventListener('keydown', e => {
@@ -1176,25 +1115,14 @@ function bindEvents() {
       case 'o': setB(); break;
       case 'q': queueClip(); break;
       case 'enter': e.preventDefault(); saveClip(); break;
+      case 'p': toggleLoop(); break;
+      case 'f': e.preventDefault(); toggleFullscreen(); break;
+      case 'k': togglePlay(); break;
       case 'escape':
+        if (document.fullscreenElement) break; // 全屏中：先让浏览器退全屏，不清 A/B
         if (state.editingClipId) cancelEdit();
         else clearPoints();
         break;
-      case 'j': {
-        const i = RATES.indexOf(state.rate);
-        setRate(RATES[Math.max(i - 1, 0)]);
-        break;
-      }
-      case 'k': togglePlay(); break;
-      case 'l':
-        if (e.shiftKey) toggleLoop();
-        else {
-          const i = RATES.indexOf(state.rate);
-          setRate(RATES[Math.min(i + 1, RATES.length - 1)]);
-        }
-        break;
-      case ',': navClip(-1); break;
-      case '.': navClip(1); break;
     }
   });
 }
@@ -1212,7 +1140,6 @@ async function init() {
   }
 
   renderMatchSelect();
-  renderDimSelect();
   bindEvents();
 
   /* 恢复片段库（无手势时只能等用户点击授权） */
